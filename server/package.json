@@ -1,0 +1,9 @@
+{
+  "name": "to-trip-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch index.ts",
+    "start": "tsx index.ts"
+  }
+}

@@ -74,7 +74,7 @@ async function amapGet<T extends AmapStatus>(path: string, params: Record<string
   try {
     res = await fetch(`/api/amap${path}?${qs}`)
   } catch {
-    throw new Error('网络请求失败：请确认已运行 npm run dev，并通过 http://127.0.0.1:5173 访问')
+    throw new Error('网络请求失败：请确认已运行 npm run dev（前端 + 后端）')
   }
   if (!res.ok) throw new Error(`高德接口请求失败（HTTP ${res.status}）`)
   return (await res.json()) as T

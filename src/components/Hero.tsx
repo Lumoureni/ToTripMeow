@@ -1,4 +1,8 @@
-export function Hero() {
+type Props = {
+  activeUserName?: string
+}
+
+export function Hero({ activeUserName }: Props) {
   return (
     <header className="hero">
       <div className="hero-media" aria-hidden="true" />
@@ -8,6 +12,7 @@ export function Hero() {
           To Trip
         </a>
         <div className="top-links">
+          <a href="#users">旅客</a>
           <a href="#plan">规划</a>
           <a href="#guides">攻略</a>
         </div>
@@ -15,13 +20,17 @@ export function Hero() {
       <div className="hero-copy">
         <p className="brand-hero">To Trip</p>
         <h1>把下一程，画成一条线</h1>
-        <p className="hero-lead">添加目的地，看见路线，顺手摸清周边吃喝住行。</p>
+        <p className="hero-lead">
+          {activeUserName
+            ? `多人可同时各自规划。当前：${activeUserName}`
+            : '添加目的地，看见路线，顺手摸清周边吃喝住行。'}
+        </p>
         <div className="hero-cta">
           <a className="btn primary" href="#plan">
             开始规划
           </a>
-          <a className="btn ghost" href="#guides">
-            查看攻略
+          <a className="btn ghost" href="#users">
+            切换旅客
           </a>
         </div>
       </div>

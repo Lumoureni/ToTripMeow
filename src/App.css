@@ -194,6 +194,173 @@ main {
   padding: 4rem 0 3rem;
 }
 
+.backend-banner {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.35rem 1rem;
+  margin-bottom: 1.5rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 0.88rem;
+}
+
+.backend-banner.online {
+  background: rgba(231, 242, 239, 0.85);
+  border-color: rgba(26, 107, 99, 0.28);
+  color: var(--sea-deep);
+}
+
+.backend-banner.offline {
+  background: rgba(155, 59, 46, 0.06);
+  border-color: rgba(155, 59, 46, 0.22);
+  color: var(--danger);
+}
+
+.user-workspace {
+  margin-bottom: 2.75rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid var(--line);
+  animation: rise-in 0.7s ease both;
+}
+
+.user-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 1.15rem;
+}
+
+.user-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 3.1rem;
+  padding: 0.45rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+
+.user-tab:hover {
+  transform: translateY(-1px);
+  border-color: rgba(26, 107, 99, 0.35);
+}
+
+.user-tab.active {
+  border-color: color-mix(in srgb, var(--user-color, var(--sea)) 55%, white);
+  background: color-mix(in srgb, var(--user-color, var(--sea)) 12%, white);
+}
+
+.user-tab.add {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+.user-dot {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  background: var(--user-color, var(--sea));
+  flex-shrink: 0;
+}
+
+.user-tab-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  min-width: 0;
+}
+
+.user-tab-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.user-tab-meta {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.user-add-form,
+.user-rename-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.user-add-form input,
+.user-rename-form input {
+  min-width: 8rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.user-add-form button,
+.user-rename-form button,
+.user-active-actions > button {
+  min-height: 2.2rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--sea);
+  color: #f7f4ef;
+  cursor: pointer;
+}
+
+.user-add-form button.ghost,
+.user-rename-form button.ghost,
+.user-active-actions > button:not(.danger) {
+  background: transparent;
+  color: var(--sea-deep);
+}
+
+.user-active-actions > button.danger {
+  background: transparent;
+  color: var(--danger);
+  border-color: rgba(155, 59, 46, 0.35);
+}
+
+.user-active-actions > button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.user-active-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.95rem;
+}
+
+.user-active-bar p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.user-active-bar strong {
+  font-size: 1.05rem;
+}
+
+.user-active-hint {
+  margin-left: 0.25rem;
+}
+
+.user-active-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
 .plan {
   display: grid;
   gap: 2rem;
@@ -513,10 +680,40 @@ main {
   min-height: 420px;
 }
 
+.map-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+
+.map-meta-row h2,
 .map-meta h2 {
   margin: 0;
   font-family: var(--font-display);
   font-size: 1.35rem;
+}
+
+.save-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.28rem 0.65rem;
+  border: 1px solid rgba(26, 107, 99, 0.25);
+  border-radius: var(--radius);
+  background: rgba(231, 242, 239, 0.75);
+  color: var(--sea-deep);
+  font-size: 0.78rem;
+  letter-spacing: 0.01em;
+}
+
+.export-tile.accent-clear .export-tile-icon {
+  background: rgba(155, 59, 46, 0.1);
+  color: var(--danger);
+}
+
+.export-tile.accent-clear:hover:not(:disabled) {
+  border-color: rgba(155, 59, 46, 0.35);
 }
 
 .map-meta p {
@@ -648,6 +845,17 @@ main {
 .export-tile.accent-copy .export-tile-icon {
   background: rgba(13, 63, 60, 0.12);
   color: var(--sea-deep);
+}
+
+.export-tile.accent-import {
+  border-color: rgba(26, 107, 99, 0.28);
+  background:
+    linear-gradient(145deg, rgba(231, 242, 239, 0.95), rgba(255, 253, 249, 0.88));
+}
+
+.export-tile.accent-import .export-tile-icon {
+  background: rgba(26, 107, 99, 0.16);
+  color: var(--sea);
 }
 
 .export-tile-icon svg {
