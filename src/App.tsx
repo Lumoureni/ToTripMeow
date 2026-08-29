@@ -40,6 +40,8 @@ import {
   switchUser,
   upsertActiveTrip,
   withPreviewUser,
+  getSelfTraveler,
+  isLinkedCompanion,
   type Workspace,
 } from './utils/tripStorage'
 import {
@@ -96,6 +98,7 @@ export default function App() {
 
   const activeUser = getActiveUser(workspace)
   const previewMode = isPreviewUser(activeUser)
+  const linkedMode = isLinkedCompanion(activeUser)
 
   const applyUserTrip = (nextWorkspace: Workspace, options?: { skipSave?: boolean }) => {
     const normalized = withPreviewUser(nextWorkspace)
@@ -166,7 +169,7 @@ export default function App() {
       skipNextSave.current = false
       return
     }
-    if (previewMode) return
+    if (previewMode || linkedMode) return
 
     // always keep local cache warm
     const local = upsertActiveTrip(workspaceRef.current, destinations, activeGuideId)
@@ -201,7 +204,7 @@ export default function App() {
     }, 450)
 
     return () => window.clearTimeout(timer)
-  }, [destinations, activeGuideId, hydrated, backendOnline, previewMode])
+  }, [destinations, activeGuideId, hydrated, backendOnline, previewMode, linkedMode])
 
   // 预览模式：进入时用汇总填充；优化/重排后锁定，离开预览时解锁
   useEffect(() => {
@@ -329,7 +332,7 @@ export default function App() {
   }
 
   const addDestination = (place: Destination) => {
-    if (previewMode) return
+    if (previewMode || linkedMode) return
     const next: Destination = { ...place, id: crypto.randomUUID() }
     setDestinations((prev) => {
       if (prev.some((d) => Math.abs(d.lat - place.lat) < 1e-5 && Math.abs(d.lon - place.lon) < 1e-5)) {
@@ -341,7 +344,7 @@ export default function App() {
   }
 
   const addDestinations = (places: Destination[]) => {
-    if (previewMode) return
+    if (previewMode || linkedMode) return
     const additions = places.map((place) => ({ ...place, id: crypto.randomUUID() }))
     setDestinations((prev) => {
       const next = [...prev]
@@ -361,7 +364,7 @@ export default function App() {
 
   /** 从周边攻略加入途径点：插在当前选中站之后；若选中为最后一站则插在倒数第二（保持终点） */
   const addWaypointFromGuide = (place: GuidePlace) => {
-    if (previewMode) return
+    if (previewMode || linkedMode) return
     const point: Destination = {
       id: crypto.randomUUID(),
       name: place.name,
@@ -389,7 +392,66 @@ export default function App() {
     })
   }
 
+  /** 将同步同行的勾选途径点并入本人行程 */
+  const addCompanionWaypointsToSelf = (places: Destination[]) => {
+    if (!linkedMode || places.length === 0) return
+    const current = withPreviewUser(workspaceRef.current)
+    const self = getSelfTraveler(current)
+    if (!self) {
+      setSyncHint('未找到本人旅客，无法添加途径点')
+      return
+    }
+    const additions = places.map((place) => ({
+      ...place,
+      id: crypto.randomUUID(),
+      ownerName: undefined,
+      ownerColor: undefined,
+    }))
+    let nextDest = [...self.destinations]
+    let added = 0
+    for (const place of additions) {
+      const exists = nextDest.some(
+        (d) => Math.abs(d.lat - place.lat) < 1e-5 && Math.abs(d.lon - place.lon) < 1e-5,
+      )
+      if (exists) continue
+      nextDest.push(place)
+      added += 1
+    }
+    if (added === 0) {
+      setSyncHint('所选途径点已在你的行程中')
+      return
+    }
+    const savedAt = new Date().toISOString()
+    const users = current.users.map((u) =>
+      u.id === self.id
+        ? {
+            ...u,
+            destinations: nextDest,
+            activeGuideId: u.activeGuideId ?? nextDest[0]?.id ?? null,
+            savedAt,
+          }
+        : u,
+    )
+    const nextWorkspace = withPreviewUser({
+      ...current,
+      activeUserId: self.id,
+      users,
+    })
+    applyUserTrip(nextWorkspace, { skipSave: true })
+    setSyncHint(`已将 ${added} 个途径点加入「${self.name}」的行程`)
+    void (async () => {
+      if (!backendOnline) return
+      try {
+        const remote = await apiPutWorkspace(nextWorkspace)
+        applyUserTrip(withPreviewUser({ ...remote, activeUserId: self.id }), { skipSave: true })
+      } catch {
+        setBackendOnline(false)
+      }
+    })()
+  }
+
   const applyRouteOption = (option: RouteOption) => {
+    if (linkedMode) return
     if (previewMode) previewLayoutLocked.current = true
     skipRouteFetch.current = true
     routeStrategy.current = option.route.strategy || '0'
@@ -401,7 +463,7 @@ export default function App() {
   }
 
   const importDestinations = (places: Destination[]) => {
-    if (previewMode) return
+    if (previewMode || linkedMode) return
     const next = places.map((place) => ({ ...place, id: crypto.randomUUID() }))
     setDestinations(next)
     setActiveGuideId(next[0]?.id ?? null)
@@ -410,7 +472,7 @@ export default function App() {
   }
 
   const clearLocalTrip = () => {
-    if (previewMode) return
+    if (previewMode || linkedMode) return
     void (async () => {
       try {
         if (backendOnline) {
@@ -426,11 +488,13 @@ export default function App() {
   }
 
   const removeDestination = (id: string) => {
+    if (previewMode || linkedMode) return
     setDestinations((prev) => prev.filter((d) => d.id !== id))
     setActiveGuideId((cur) => (cur === id ? null : cur))
   }
 
   const reorder = (from: number, to: number) => {
+    if (linkedMode) return
     setDestinations((prev) => {
       if (to < 0 || to >= prev.length) return prev
       const next = [...prev]
@@ -708,6 +772,9 @@ export default function App() {
             onReorder={reorder}
             readOnly={previewMode}
             allowArrange={previewMode}
+            companionPick={linkedMode}
+            companionName={activeUser.name}
+            onAddCompanionWaypoints={addCompanionWaypointsToSelf}
           />
         </aside>
 
@@ -748,7 +815,9 @@ export default function App() {
                   <p className="map-shared-hint">
                     {previewMode
                       ? '预览模式：可优化并重排全部汇总地点；粗线为预览路线，细线为各旅客原路线。'
-                      : `所有旅客的行程会叠在同一张地图上；粗线与高亮标记为当前旅客「${activeUser.name}」。`}
+                      : linkedMode
+                        ? `正在查看同步同行「${activeUser.name}」：路径只读，请在左侧勾选途径点加入你的行程。`
+                        : `所有旅客的行程会叠在同一张地图上；粗线与高亮标记为当前旅客「${activeUser.name}」。`}
                   </p>
                   {(routeLoading || peerRoutesLoading) && <p>正在计算路线…</p>}
                   {routeError && (
@@ -786,14 +855,24 @@ export default function App() {
                 </div>
                 <RouteMap layers={mapLayers} />
               </div>
-              <RouteOptimizePanel destinations={destinations} onApply={applyRouteOption} />
-              <ExportPanel
-                destinations={destinations}
-                route={route}
-                savedAtLabel={savedLabel}
-                onImport={importDestinations}
-                onClearLocal={clearLocalTrip}
-              />
+              {!linkedMode && (
+                <RouteOptimizePanel destinations={destinations} onApply={applyRouteOption} />
+              )}
+              {!linkedMode && (
+                <ExportPanel
+                  destinations={destinations}
+                  route={route}
+                  savedAtLabel={savedLabel}
+                  onImport={importDestinations}
+                  onClearLocal={clearLocalTrip}
+                />
+              )}
+            </div>
+          ) : linkedMode ? (
+            <div className="plan-guides-panel">
+              <p className="map-shared-hint">
+                同步同行的行程为只读。请切换到本人旅客后再查看周边攻略；或在左侧勾选对方途径点加入自己的行程。
+              </p>
             </div>
           ) : (
             <div className="plan-guides-panel">

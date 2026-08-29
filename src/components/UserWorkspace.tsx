@@ -131,7 +131,7 @@ export function UserWorkspace({
           <p className="user-menu-hint">
             {travelers.length <= 1
               ? '当前为你本人的行程。添加同行人时可输入对方账号密码同步行程。'
-              : '每位旅客独立行程。已同步的同行人可再次添加以刷新行程；也可进入预览汇总。'}
+              : '每位旅客独立行程。已同步的同行只读，可勾选途径点加入自己；也可进入预览汇总。'}
           </p>
 
           <ul className="user-menu-list">
@@ -176,7 +176,7 @@ export function UserWorkspace({
                             {user.name}
                             {preview && <span className="user-preview-tag">汇总</span>}
                             {!preview && user.linkedAccountId && (
-                              <span className="user-preview-tag">已同步</span>
+                              <span className="user-preview-tag">已同步 · 只读</span>
                             )}
                           </span>
                           <span className="user-tab-meta">

@@ -57,8 +57,19 @@ export function isPreviewUser(user: Pick<TripUser, 'id' | 'role'> | null | undef
   return user.id === PREVIEW_USER_ID || user.role === 'preview'
 }
 
+/** 通过账号同步加入的同行旅客（只读，不可改对方路径） */
+export function isLinkedCompanion(user: Pick<TripUser, 'linkedAccountId' | 'role'> | null | undefined): boolean {
+  if (!user || user.role === 'preview') return false
+  return Boolean(user.linkedAccountId)
+}
+
 export function listTravelers(users: TripUser[]): TripUser[] {
   return users.filter((u) => !isPreviewUser(u))
+}
+
+/** 当前账号本人旅客（非同步同行） */
+export function getSelfTraveler(workspace: Workspace): TripUser | null {
+  return listTravelers(workspace.users).find((u) => !isLinkedCompanion(u)) ?? null
 }
 
 /** 合并所有旅客地点（按坐标去重，保留首次出现顺序，并标注来源） */

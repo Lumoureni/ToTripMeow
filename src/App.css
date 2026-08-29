@@ -1400,6 +1400,41 @@ main {
   border-bottom: 1px solid var(--line);
 }
 
+.dest-pick {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  grid-column: 1 / -1;
+  width: 100%;
+  cursor: pointer;
+}
+
+.dest-pick input {
+  margin-top: 0.4rem;
+  flex-shrink: 0;
+}
+
+.dest-pick .dest-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.companion-pick-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0 0 0.75rem;
+}
+
+.planner.companion-pick .dest-list {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0 0.75rem;
+  background: rgba(255, 252, 248, 0.75);
+}
+
 .dest-index {
   width: 1.75rem;
   height: 1.75rem;
