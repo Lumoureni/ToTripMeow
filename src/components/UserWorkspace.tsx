@@ -7,23 +7,29 @@ type Props = {
   activeUserId: string
   onSwitch: (userId: string) => void
   onAdd: (name: string) => void
+  onLinkCompanion: (username: string, password: string) => Promise<void>
   onRename: (userId: string, name: string) => void
   onRemove: (userId: string) => void
 }
 
-type AddMode = 'idle' | 'choose' | 'traveler'
+type AddMode = 'idle' | 'choose' | 'link' | 'local'
 
 export function UserWorkspace({
   users,
   activeUserId,
   onSwitch,
   onAdd,
+  onLinkCompanion,
   onRename,
   onRemove,
 }: Props) {
   const [open, setOpen] = useState(false)
   const [addMode, setAddMode] = useState<AddMode>('idle')
   const [newName, setNewName] = useState('')
+  const [peerUsername, setPeerUsername] = useState('')
+  const [peerPassword, setPeerPassword] = useState('')
+  const [linkLoading, setLinkLoading] = useState(false)
+  const [linkError, setLinkError] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const rootRef = useRef<HTMLDivElement>(null)
@@ -35,6 +41,10 @@ export function UserWorkspace({
   const resetAdd = () => {
     setAddMode('idle')
     setNewName('')
+    setPeerUsername('')
+    setPeerPassword('')
+    setLinkError(null)
+    setLinkLoading(false)
   }
 
   useEffect(() => {
@@ -61,11 +71,25 @@ export function UserWorkspace({
     }
   }, [open])
 
-  const submitAdd = (e: FormEvent) => {
+  const submitAddLocal = (e: FormEvent) => {
     e.preventDefault()
     const name = newName.trim() || `旅客 ${travelers.length + 1}`
     onAdd(name)
     resetAdd()
+  }
+
+  const submitLink = async (e: FormEvent) => {
+    e.preventDefault()
+    setLinkError(null)
+    setLinkLoading(true)
+    try {
+      await onLinkCompanion(peerUsername.trim(), peerPassword)
+      resetAdd()
+      setOpen(false)
+    } catch (err) {
+      setLinkError(err instanceof Error ? err.message : '同步失败')
+      setLinkLoading(false)
+    }
   }
 
   const submitRename = (e: FormEvent) => {
@@ -105,7 +129,9 @@ export function UserWorkspace({
       {open && (
         <div className="user-menu-panel" id="user-menu-panel" role="menu" aria-label="旅客管理">
           <p className="user-menu-hint">
-            每位旅客独立行程。添加时可选择「普通旅客」或「预览」（汇总全部地点）。
+            {travelers.length <= 1
+              ? '当前为你本人的行程。添加同行人时可输入对方账号密码同步行程。'
+              : '每位旅客独立行程。已同步的同行人可再次添加以刷新行程；也可进入预览汇总。'}
           </p>
 
           <ul className="user-menu-list">
@@ -149,6 +175,9 @@ export function UserWorkspace({
                           <span className="user-tab-name">
                             {user.name}
                             {preview && <span className="user-preview-tag">汇总</span>}
+                            {!preview && user.linkedAccountId && (
+                              <span className="user-preview-tag">已同步</span>
+                            )}
                           </span>
                           <span className="user-tab-meta">
                             {preview
@@ -218,27 +247,69 @@ export function UserWorkspace({
                 <button
                   type="button"
                   className="user-add-option"
-                  onClick={() => setAddMode('traveler')}
+                  onClick={() => setAddMode('link')}
                 >
-                  <strong>普通旅客</strong>
-                  <span>独立编辑自己的行程</span>
+                  <strong>同步同行账号</strong>
+                  <span>输入对方登录账号与密码，导入其行程</span>
                 </button>
                 <button
                   type="button"
-                  className="user-add-option preview"
-                  onClick={enterPreview}
+                  className="user-add-option"
+                  onClick={() => setAddMode('local')}
                 >
-                  <strong>预览{previewUser ? '（已有，直接进入）' : ''}</strong>
-                  <span>汇总所有旅客已选地点，只读查看</span>
+                  <strong>本地旅客</strong>
+                  <span>仅本机新建空行程，不同步账号</span>
                 </button>
+                {travelers.length >= 2 && (
+                  <button
+                    type="button"
+                    className="user-add-option preview"
+                    onClick={enterPreview}
+                  >
+                    <strong>预览{previewUser ? '（已有，直接进入）' : ''}</strong>
+                    <span>汇总所有旅客已选地点，只读查看</span>
+                  </button>
+                )}
                 <button type="button" className="ghost user-add-cancel" onClick={resetAdd}>
                   取消
                 </button>
               </div>
             )}
 
-            {addMode === 'traveler' && (
-              <form className="user-add-form" onSubmit={submitAdd}>
+            {addMode === 'link' && (
+              <form className="user-add-form user-link-form" onSubmit={(e) => void submitLink(e)}>
+                <input
+                  autoFocus
+                  autoComplete="username"
+                  value={peerUsername}
+                  onChange={(e) => setPeerUsername(e.target.value)}
+                  placeholder="同行人账号"
+                  maxLength={20}
+                  required
+                />
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  value={peerPassword}
+                  onChange={(e) => setPeerPassword(e.target.value)}
+                  placeholder="同行人密码"
+                  minLength={4}
+                  required
+                />
+                {linkError && <p className="user-link-error">{linkError}</p>}
+                <div className="user-link-actions">
+                  <button type="submit" disabled={linkLoading}>
+                    {linkLoading ? '同步中…' : '同步并添加'}
+                  </button>
+                  <button type="button" className="ghost" onClick={() => setAddMode('choose')}>
+                    返回
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {addMode === 'local' && (
+              <form className="user-add-form" onSubmit={submitAddLocal}>
                 <input
                   autoFocus
                   value={newName}

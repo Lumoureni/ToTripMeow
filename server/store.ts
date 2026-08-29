@@ -2,12 +2,20 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  findAccountByUsername,
+  verifyPassword,
+} from './authStore.js'
 import type { Destination, TripUser, Workspace } from './types.js'
 import { PREVIEW_COLOR, PREVIEW_USER_ID, USER_COLORS } from './types.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = join(__dirname, '..', 'data')
-const DATA_FILE = join(DATA_DIR, 'workspace.json')
+const WORKSPACES_DIR = join(DATA_DIR, 'workspaces')
+
+function workspaceFile(accountId: string) {
+  return join(WORKSPACES_DIR, `${accountId}.json`)
+}
 
 function isDestination(value: unknown): value is Destination {
   if (!value || typeof value !== 'object') return false
@@ -76,6 +84,15 @@ function createUser(name: string, index: number): TripUser {
 function withPreviewUser(workspace: Workspace): Workspace {
   const travelers = listTravelers(workspace.users)
   const ensuredTravelers = travelers.length > 0 ? travelers : [createUser('旅客 1', 0)]
+  // 仅一人时不挂载「预览」，界面只保留用户本人
+  if (ensuredTravelers.length < 2) {
+    const activeUserId =
+      typeof workspace.activeUserId === 'string' &&
+      ensuredTravelers.some((u) => u.id === workspace.activeUserId)
+        ? workspace.activeUserId
+        : ensuredTravelers[0].id
+    return { version: 2, activeUserId, users: ensuredTravelers }
+  }
   const destinations = aggregateTravelerDestinations(ensuredTravelers)
   const preview = createPreviewUser(destinations)
   const users = [preview, ...ensuredTravelers]
@@ -107,15 +124,19 @@ function sanitizeUser(raw: Partial<TripUser>, index: number): TripUser | null {
     destinations: role === 'preview' ? [] : destinations,
     activeGuideId: role === 'preview' ? null : activeGuideId,
     role,
+    ...(role !== 'preview' && typeof raw.linkedAccountId === 'string'
+      ? { linkedAccountId: raw.linkedAccountId }
+      : {}),
   }
 }
 
-export function defaultWorkspace(): Workspace {
-  return withPreviewUser({
+export function defaultWorkspace(ownerName = '旅客 1'): Workspace {
+  const user = createUser(ownerName, 0)
+  return {
     version: 2,
-    activeUserId: '',
-    users: [createUser('旅客 1', 0)],
-  })
+    activeUserId: user.id,
+    users: [user],
+  }
 }
 
 export function normalizeWorkspace(raw: unknown): Workspace {
@@ -133,20 +154,52 @@ export function normalizeWorkspace(raw: unknown): Workspace {
   })
 }
 
-export function readWorkspace(): Workspace {
+export function readWorkspace(accountId: string, ownerName?: string): Workspace {
+  const fallbackName = ownerName?.trim() || '旅客 1'
   try {
-    if (!existsSync(DATA_FILE)) return defaultWorkspace()
-    const raw = JSON.parse(readFileSync(DATA_FILE, 'utf-8'))
-    return normalizeWorkspace(raw)
+    const file = workspaceFile(accountId)
+    if (existsSync(file)) {
+      const raw = JSON.parse(readFileSync(file, 'utf-8'))
+      const normalized = normalizeWorkspace(raw)
+      const travelers = listTravelers(normalized.users)
+      const stops = travelers.reduce((sum, u) => sum + u.destinations.length, 0)
+      // 空行程却有多名旅客：多为旧版全局数据误拷贝，收敛为账号本人
+      if (travelers.length > 1 && stops === 0 && ownerName?.trim()) {
+        return writeWorkspace(accountId, defaultWorkspace(fallbackName))
+      }
+      return normalized
+    }
+    // 新账号独立空行程，不再继承旧版全局 workspace.json
+    return writeWorkspace(accountId, defaultWorkspace(fallbackName))
   } catch {
-    return defaultWorkspace()
+    return writeWorkspace(accountId, defaultWorkspace(fallbackName))
   }
 }
 
-export function writeWorkspace(workspace: Workspace): Workspace {
+/** 管理后台用：账号行程摘要（不存在则返回空） */
+export function getWorkspaceSummary(accountId: string): {
+  travelers: number
+  stops: number
+  hasWorkspace: boolean
+} {
+  const file = workspaceFile(accountId)
+  if (!existsSync(file)) {
+    return { travelers: 0, stops: 0, hasWorkspace: false }
+  }
+  try {
+    const ws = normalizeWorkspace(JSON.parse(readFileSync(file, 'utf-8')))
+    const travelers = listTravelers(ws.users)
+    const stops = travelers.reduce((sum, u) => sum + u.destinations.length, 0)
+    return { travelers: travelers.length, stops, hasWorkspace: true }
+  } catch {
+    return { travelers: 0, stops: 0, hasWorkspace: false }
+  }
+}
+
+export function writeWorkspace(accountId: string, workspace: Workspace): Workspace {
   const normalized = normalizeWorkspace(workspace)
-  mkdirSync(DATA_DIR, { recursive: true })
-  writeFileSync(DATA_FILE, JSON.stringify(normalized, null, 2), 'utf-8')
+  mkdirSync(WORKSPACES_DIR, { recursive: true })
+  writeFileSync(workspaceFile(accountId), JSON.stringify(normalized, null, 2), 'utf-8')
   return normalized
 }
 
@@ -156,52 +209,52 @@ export function getActiveUser(workspace: Workspace): TripUser {
 }
 
 export function upsertActiveTrip(
-  workspace: Workspace,
+  accountId: string,
   destinations: Destination[],
   activeGuideId: string | null,
 ): Workspace {
-  const current = withPreviewUser(workspace)
+  const current = withPreviewUser(readWorkspace(accountId))
   const active = getActiveUser(current)
   if (isPreviewUser(active)) {
-    return writeWorkspace(current)
+    return writeWorkspace(accountId, current)
   }
   const savedAt = new Date().toISOString()
   const users = current.users.map((u) =>
     u.id === current.activeUserId ? { ...u, destinations, activeGuideId, savedAt } : u,
   )
-  return writeWorkspace({ ...current, users })
+  return writeWorkspace(accountId, { ...current, users })
 }
 
-export function switchUser(workspace: Workspace, userId: string): Workspace {
-  const current = withPreviewUser(workspace)
+export function switchUser(accountId: string, userId: string): Workspace {
+  const current = withPreviewUser(readWorkspace(accountId))
   if (!current.users.some((u) => u.id === userId)) return current
-  return writeWorkspace({ ...current, activeUserId: userId })
+  return writeWorkspace(accountId, { ...current, activeUserId: userId })
 }
 
-export function addUser(workspace: Workspace, name: string): Workspace {
-  const current = withPreviewUser(workspace)
+export function addUser(accountId: string, name: string): Workspace {
+  const current = withPreviewUser(readWorkspace(accountId))
   const travelers = listTravelers(current.users)
   const user = createUser(name, travelers.length)
-  return writeWorkspace({
+  return writeWorkspace(accountId, {
     ...current,
     activeUserId: user.id,
     users: [...current.users, user],
   })
 }
 
-export function renameUser(workspace: Workspace, userId: string, name: string): Workspace {
-  const current = withPreviewUser(workspace)
+export function renameUser(accountId: string, userId: string, name: string): Workspace {
+  const current = withPreviewUser(readWorkspace(accountId))
   if (userId === PREVIEW_USER_ID) return current
   const trimmed = name.trim()
   if (!trimmed) return current
-  return writeWorkspace({
+  return writeWorkspace(accountId, {
     ...current,
     users: current.users.map((u) => (u.id === userId ? { ...u, name: trimmed } : u)),
   })
 }
 
-export function removeUser(workspace: Workspace, userId: string): Workspace {
-  const current = withPreviewUser(workspace)
+export function removeUser(accountId: string, userId: string): Workspace {
+  const current = withPreviewUser(readWorkspace(accountId))
   if (userId === PREVIEW_USER_ID) return current
   const travelers = listTravelers(current.users)
   if (travelers.length <= 1) return current
@@ -210,11 +263,85 @@ export function removeUser(workspace: Workspace, userId: string): Workspace {
     current.activeUserId === userId
       ? listTravelers(users)[0]?.id ?? PREVIEW_USER_ID
       : current.activeUserId
-  return writeWorkspace({ version: 2, activeUserId, users })
+  return writeWorkspace(accountId, { version: 2, activeUserId, users })
 }
 
-export function clearActiveTrip(workspace: Workspace): Workspace {
-  const current = withPreviewUser(workspace)
+export function clearActiveTrip(accountId: string): Workspace {
+  const current = withPreviewUser(readWorkspace(accountId))
   if (isPreviewUser(getActiveUser(current))) return current
-  return upsertActiveTrip(current, [], null)
+  return upsertActiveTrip(accountId, [], null)
+}
+
+function cloneDestinations(destinations: Destination[]): Destination[] {
+  return destinations.map((d) => ({
+    ...d,
+    id: randomUUID(),
+    ownerName: undefined,
+    ownerColor: undefined,
+  }))
+}
+
+/** 校验同行账号密码，将其本人行程拷贝为当前工作区的一名旅客 */
+export function addLinkedCompanion(
+  hostAccountId: string,
+  peerUsername: string,
+  peerPassword: string,
+): Workspace {
+  const peer = findAccountByUsername(peerUsername)
+  if (!peer || !verifyPassword(peer, peerPassword)) {
+    throw new Error('同行人账号或密码错误')
+  }
+  if (peer.disabled) throw new Error('该账号已被禁用')
+  if (peer.role === 'admin') throw new Error('不能添加管理员账号为旅客')
+  if (peer.id === hostAccountId) throw new Error('不能添加自己的账号')
+
+  const peerWs = readWorkspace(peer.id, peer.displayName)
+  const peerTravelers = listTravelers(peerWs.users)
+  const source =
+    peerTravelers.find((t) => t.name === peer.displayName || t.name === peer.account) ??
+    peerTravelers[0] ??
+    null
+  const destinations = source ? cloneDestinations(source.destinations) : []
+  const activeGuideId = destinations[0]?.id ?? null
+  const savedAt = new Date().toISOString()
+
+  const current = withPreviewUser(readWorkspace(hostAccountId))
+  const travelers = listTravelers(current.users)
+  const existing = travelers.find((u) => u.linkedAccountId === peer.id)
+
+  if (existing) {
+    const users = current.users.map((u) =>
+      u.id === existing.id
+        ? {
+            ...u,
+            name: peer.displayName,
+            destinations,
+            activeGuideId,
+            savedAt,
+            linkedAccountId: peer.id,
+          }
+        : u,
+    )
+    return writeWorkspace(hostAccountId, {
+      ...current,
+      activeUserId: existing.id,
+      users,
+    })
+  }
+
+  const user: TripUser = {
+    id: randomUUID(),
+    name: peer.displayName,
+    color: USER_COLORS[travelers.length % USER_COLORS.length],
+    savedAt,
+    destinations,
+    activeGuideId,
+    role: 'traveler',
+    linkedAccountId: peer.id,
+  }
+  return writeWorkspace(hostAccountId, {
+    ...current,
+    activeUserId: user.id,
+    users: [...current.users, user],
+  })
 }

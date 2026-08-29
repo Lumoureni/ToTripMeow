@@ -3,6 +3,17 @@ import type { Destination } from '../types'
 export const TRIP_STORAGE_KEY = 'to-trip:workspace-v2'
 const LEGACY_DRAFT_KEY = 'to-trip:draft-v1'
 
+let storageAccountId: string | null = null
+
+/** 按登录账号隔离本机缓存 */
+export function setStorageAccountId(accountId: string | null) {
+  storageAccountId = accountId
+}
+
+function storageKey() {
+  return storageAccountId ? `${TRIP_STORAGE_KEY}:${storageAccountId}` : TRIP_STORAGE_KEY
+}
+
 export const PREVIEW_USER_ID = 'preview-all'
 export const PREVIEW_COLOR = '#4a5d78'
 
@@ -15,6 +26,8 @@ export type TripUser = {
   activeGuideId: string | null
   /** 预览用户：只读汇总所有旅客地点 */
   role?: 'traveler' | 'preview'
+  /** 已通过账号密码同步的同行账号 id */
+  linkedAccountId?: string
 }
 
 export type Workspace = {
@@ -79,11 +92,19 @@ function createPreviewUser(destinations: Destination[]): TripUser {
   }
 }
 
-/** 保证预览用户存在，并刷新其汇总地点 */
+/** 保证多旅客时存在预览用户；单旅客时仅保留本人 */
 export function withPreviewUser(workspace: Workspace): Workspace {
   const travelers = listTravelers(workspace.users)
   const ensuredTravelers =
     travelers.length > 0 ? travelers : [createUser('旅客 1', 0)]
+  if (ensuredTravelers.length < 2) {
+    const activeUserId =
+      typeof workspace.activeUserId === 'string' &&
+      ensuredTravelers.some((u) => u.id === workspace.activeUserId)
+        ? workspace.activeUserId
+        : ensuredTravelers[0].id
+    return { version: 2, activeUserId, users: ensuredTravelers }
+  }
   const destinations = aggregateTravelerDestinations(ensuredTravelers)
   const preview = createPreviewUser(destinations)
   const users = [preview, ...ensuredTravelers]
@@ -115,6 +136,9 @@ function sanitizeUser(raw: Partial<TripUser>, index: number): TripUser | null {
     destinations: role === 'preview' ? [] : destinations,
     activeGuideId: role === 'preview' ? null : activeGuideId,
     role,
+    ...(role !== 'preview' && typeof raw.linkedAccountId === 'string'
+      ? { linkedAccountId: raw.linkedAccountId }
+      : {}),
   }
 }
 
@@ -130,12 +154,13 @@ function createUser(name: string, index: number): TripUser {
   }
 }
 
-function defaultWorkspace(): Workspace {
-  return withPreviewUser({
+function defaultWorkspace(ownerName = '旅客 1'): Workspace {
+  const user = createUser(ownerName, 0)
+  return {
     version: 2,
-    activeUserId: '',
-    users: [createUser('旅客 1', 0)],
-  })
+    activeUserId: user.id,
+    users: [user],
+  }
 }
 
 function migrateLegacyDraft(): Workspace | null {
@@ -167,7 +192,7 @@ function migrateLegacyDraft(): Workspace | null {
 
 export function loadWorkspace(): Workspace {
   try {
-    const raw = localStorage.getItem(TRIP_STORAGE_KEY)
+    const raw = localStorage.getItem(storageKey())
     if (raw) {
       const data = JSON.parse(raw) as Partial<Workspace>
       if (data.version === 2 && Array.isArray(data.users)) {
@@ -186,11 +211,14 @@ export function loadWorkspace(): Workspace {
   } catch {
     // fall through
   }
-  return migrateLegacyDraft() ?? defaultWorkspace()
+  if (!storageAccountId) {
+    return migrateLegacyDraft() ?? defaultWorkspace()
+  }
+  return defaultWorkspace()
 }
 
 export function saveWorkspace(workspace: Workspace) {
-  localStorage.setItem(TRIP_STORAGE_KEY, JSON.stringify(withPreviewUser(workspace)))
+  localStorage.setItem(storageKey(), JSON.stringify(withPreviewUser(workspace)))
 }
 
 export function getActiveUser(workspace: Workspace): TripUser {

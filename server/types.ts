@@ -21,6 +21,8 @@ export type TripUser = {
   destinations: Destination[]
   activeGuideId: string | null
   role?: 'traveler' | 'preview'
+  /** 已通过账号密码同步的同行账号 id */
+  linkedAccountId?: string
 }
 
 export type Workspace = {

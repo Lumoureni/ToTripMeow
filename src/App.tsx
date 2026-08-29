@@ -5,15 +5,19 @@ import {
   apiClearActiveTrip,
   apiGetWorkspace,
   apiHealth,
+  apiLinkCompanion,
   apiPutActiveTrip,
   apiPutWorkspace,
   apiRemoveUser,
   apiRenameUser,
   apiSwitchUser,
 } from './api/workspaceApi'
+import { apiLogout, apiMe } from './api/authApi'
+import { AdminPage } from './components/AdminPage'
 import { DestinationPlanner } from './components/DestinationPlanner'
 import { ExportPanel } from './components/ExportPanel'
 import { Hero } from './components/Hero'
+import { LoginPage } from './components/LoginPage'
 import { NearbyGuides } from './components/NearbyGuides'
 import { RouteMap } from './components/RouteMap'
 import { RouteOptimizePanel } from './components/RouteOptimizePanel'
@@ -32,11 +36,17 @@ import {
   removeUser,
   renameUser,
   saveWorkspace,
+  setStorageAccountId,
   switchUser,
   upsertActiveTrip,
   withPreviewUser,
   type Workspace,
 } from './utils/tripStorage'
+import {
+  clearAuthSession,
+  loadAuthSession,
+  type AuthSession,
+} from './utils/authStorage'
 import type { Destination, GuidePlace, MapTravelerLayer, RouteInfo, RouteOption } from './types'
 import './App.css'
 
@@ -48,9 +58,19 @@ function formatDuration(minutes: number) {
 }
 
 export default function App() {
+  const [auth, setAuth] = useState<AuthSession | null>(() => {
+    const session = loadAuthSession()
+    if (session?.user.role === 'user') setStorageAccountId(session.user.id)
+    else setStorageAccountId(null)
+    return session
+  })
   const boot = loadWorkspace()
   const bootUser = getActiveUser(boot)
 
+  const [view, setView] = useState<'home' | 'login' | 'plan' | 'admin'>(() =>
+    loadAuthSession()?.user.role === 'admin' ? 'admin' : 'home',
+  )
+  const [planTab, setPlanTab] = useState<'route' | 'guides'>('route')
   const [workspace, setWorkspace] = useState<Workspace>(boot)
   const workspaceRef = useRef(workspace)
   workspaceRef.current = workspace
@@ -99,10 +119,33 @@ export default function App() {
         const health = await apiHealth()
         if (cancelled) return
         setBackendOnline(health.ok)
-        const remote = await apiGetWorkspace()
-        if (cancelled) return
-        applyUserTrip(remote, { skipSave: true })
-        setSyncHint('已连接后端，行程云端同步中')
+        const session = loadAuthSession()
+        if (!session) {
+          setSyncHint('请先登录后同步行程')
+          return
+        }
+        try {
+          const me = await apiMe()
+          if (cancelled) return
+          setAuth({ token: session.token, user: me })
+          if (me.role === 'admin') {
+            setStorageAccountId(null)
+            setView('admin')
+            setSyncHint('管理员已登录')
+            return
+          }
+          setStorageAccountId(me.id)
+          const remote = await apiGetWorkspace()
+          if (cancelled) return
+          applyUserTrip(remote, { skipSave: true })
+          setSyncHint('已连接后端，行程云端同步中')
+        } catch {
+          if (cancelled) return
+          clearAuthSession()
+          setAuth(null)
+          setStorageAccountId(null)
+          setSyncHint('登录已失效，请重新登录')
+        }
       } catch {
         if (cancelled) return
         setBackendOnline(false)
@@ -232,6 +275,27 @@ export default function App() {
         applyUserTrip(addUser(flushed, name), { skipSave: true })
       }
     })()
+  }
+
+  const handleLinkCompanion = async (username: string, password: string) => {
+    if (!backendOnline) {
+      throw new Error('需要连接后端才能同步同行行程')
+    }
+    const flushed = upsertActiveTrip(workspaceRef.current, destinations, activeGuideId)
+    workspaceRef.current = flushed
+    try {
+      await apiPutActiveTrip(destinations, activeGuideId)
+      const next = await apiLinkCompanion(username, password)
+      applyUserTrip(next, { skipSave: true })
+      setBackendOnline(true)
+      setSyncHint(`已同步同行「${username}」的行程`)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '同步失败'
+      if (message.includes('无法连接') || message.includes('登录已过期')) {
+        setBackendOnline(false)
+      }
+      throw new Error(message)
+    }
   }
 
   const handleRenameUser = (userId: string, name: string) => {
@@ -502,17 +566,97 @@ export default function App() {
     }))
 
   const savedLabel = formatSavedAt(savedAt)
-  const [view, setView] = useState<'home' | 'plan'>('home')
-  const [planTab, setPlanTab] = useState<'route' | 'guides'>('route')
+
+  const enterPlan = () => {
+    if (!auth) {
+      setView('login')
+      return
+    }
+    if (auth.user.role === 'admin') {
+      setView('admin')
+      return
+    }
+    setPlanTab('route')
+    setView('plan')
+  }
+
+  const handleAuthSuccess = async (session: AuthSession) => {
+    setAuth(session)
+    if (session.user.role === 'admin') {
+      setStorageAccountId(null)
+      setView('admin')
+      setSyncHint('管理员已登录')
+      return
+    }
+    setStorageAccountId(session.user.id)
+    skipNextSave.current = true
+    try {
+      const remote = await apiGetWorkspace()
+      applyUserTrip(remote, { skipSave: true })
+      setBackendOnline(true)
+      setSyncHint('登录成功，行程已同步')
+    } catch {
+      applyUserTrip(loadWorkspace(), { skipSave: true })
+      setSyncHint('已登录，云端工作区暂不可用，使用本机缓存')
+    }
+    setPlanTab('route')
+    setView('plan')
+  }
+
+  const handleLogout = () => {
+    void (async () => {
+      try {
+        await apiLogout()
+      } catch {
+        clearAuthSession()
+      }
+      setAuth(null)
+      setStorageAccountId(null)
+      applyUserTrip(loadWorkspace(), { skipSave: true })
+      setBackendOnline(false)
+      setView('home')
+      setSyncHint('已退出登录')
+    })()
+  }
+
+  if (view === 'login') {
+    return (
+      <LoginPage
+        onBack={() => setView('home')}
+        onSuccess={(session) => {
+          void handleAuthSuccess(session)
+        }}
+      />
+    )
+  }
+
+  if (view === 'admin' && auth?.user.role === 'admin') {
+    return <AdminPage adminName={auth.user.displayName} onLogout={handleLogout} />
+  }
 
   if (view === 'home') {
     return (
       <div id="top" className="page home-page">
         <Hero
-          onStartPlan={() => {
-            setPlanTab('route')
-            setView('plan')
-          }}
+          loggedIn={Boolean(auth)}
+          displayName={auth?.user.displayName}
+          isAdmin={auth?.user.role === 'admin'}
+          onLogin={() => setView('login')}
+          onStartPlan={enterPlan}
+        />
+      </div>
+    )
+  }
+
+  if (!auth || auth.user.role === 'admin') {
+    return (
+      <div id="top" className="page home-page">
+        <Hero
+          loggedIn={Boolean(auth)}
+          displayName={auth?.user.displayName}
+          isAdmin={auth?.user.role === 'admin'}
+          onLogin={() => setView('login')}
+          onStartPlan={enterPlan}
         />
       </div>
     )
@@ -533,20 +677,24 @@ export default function App() {
             activeUserId={workspace.activeUserId}
             onSwitch={handleSwitchUser}
             onAdd={handleAddUser}
+            onLinkCompanion={handleLinkCompanion}
             onRename={handleRenameUser}
             onRemove={handleRemoveUser}
           />
         </div>
         <div className="plan-topbar-right">
+          {auth && <span className="plan-topbar-chip plan-account-chip">{auth.user.displayName}</span>}
           <div
-            className={`backend-pill${backendOnline ? ' online' : ' offline'}`}
+            className={`plan-topbar-chip backend-pill${backendOnline ? ' online' : ' offline'}`}
             title={syncHint || undefined}
           >
             {backendOnline ? '后端已连接' : '后端离线'}
           </div>
-          <button type="button" className="plan-home-btn" onClick={() => setView('home')}>
-            返回首页
-          </button>
+          {auth && (
+            <button type="button" className="plan-topbar-chip plan-home-btn" onClick={handleLogout}>
+              退出登录
+            </button>
+          )}
         </div>
       </header>
 
