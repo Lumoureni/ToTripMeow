@@ -7,6 +7,7 @@ import type {
   RouteOption,
 } from '../types'
 import { extractPlaceCandidates } from '../utils/extractPlaces'
+import { getAuthToken } from '../utils/authStorage'
 
 type AmapStatus = { status: string; info: string; infocode?: string }
 
@@ -77,12 +78,16 @@ function parsePolyline(polyline: string): [number, number][] {
 
 async function amapGet<T extends AmapStatus>(path: string, params: Record<string, string>): Promise<T> {
   const qs = new URLSearchParams(params)
+  const token = getAuthToken()
   let res: Response
   try {
-    res = await fetch(`/api/amap${path}?${qs}`)
+    res = await fetch(`/api/amap${path}?${qs}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
   } catch {
     throw new Error('网络请求失败：请确认已运行 npm run dev（前端 + 后端）')
   }
+  if (res.status === 401) throw new Error('请先登录后再使用地图与地点服务')
   if (!res.ok) throw new Error(`高德接口请求失败（HTTP ${res.status}）`)
   return (await res.json()) as T
 }

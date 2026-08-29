@@ -428,11 +428,41 @@ input {
   color: var(--sea-deep);
 }
 
-.backend-pill {
-  padding: 0.28rem 0.65rem;
+.user-link-form {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.user-link-form input {
+  width: 100%;
+  flex: none;
+}
+
+.user-link-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.user-link-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.8rem;
+}
+
+.plan-topbar-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: 2.2rem;
+  height: 2.2rem;
+  padding: 0 0.85rem;
   border-radius: var(--radius);
   border: 1px solid var(--line);
-  font-size: 0.78rem;
+  font-size: 0.82rem;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .backend-pill.online {
@@ -448,13 +478,13 @@ input {
 }
 
 .plan-home-btn {
-  min-height: 2.2rem;
-  padding: 0 0.85rem;
   border: 1px solid rgba(26, 107, 99, 0.3);
-  border-radius: var(--radius);
   background: transparent;
   color: var(--sea-deep);
   cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
 }
 
 .plan-shell {
@@ -631,6 +661,349 @@ input {
   align-items: center;
   justify-content: space-between;
   padding: 1.25rem clamp(1.25rem, 4vw, 3rem);
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.topbar-user-chip {
+  padding: 0.28rem 0.7rem;
+  border-radius: var(--radius);
+  border: 1px solid rgba(247, 244, 239, 0.35);
+  font-size: 0.82rem;
+  color: #f7f4ef;
+}
+
+.plan-account-chip {
+  border-color: rgba(26, 107, 99, 0.28);
+  background: rgba(231, 242, 239, 0.65);
+  color: var(--sea-deep);
+}
+
+.btn.ghost-light {
+  min-height: 2.2rem;
+  padding: 0 0.9rem;
+  border: 1px solid rgba(247, 244, 239, 0.45);
+  border-radius: var(--radius);
+  background: transparent;
+  color: #f7f4ef;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.auth-page {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background:
+    radial-gradient(900px 420px at 10% 0%, #d7ebe6 0%, transparent 55%),
+    linear-gradient(180deg, #f7f4ef 0%, #eef5f2 100%);
+}
+
+.auth-shell {
+  width: min(26rem, 100%);
+}
+
+.auth-back {
+  margin-bottom: 0.85rem;
+  border: 0;
+  background: transparent;
+  color: var(--sea-deep);
+  cursor: pointer;
+  padding: 0;
+  font-size: 0.92rem;
+}
+
+.auth-card {
+  padding: 1.4rem 1.35rem 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) + 4px);
+  background: rgba(255, 252, 248, 0.92);
+  box-shadow: 0 16px 40px rgba(20, 48, 44, 0.08);
+}
+
+.auth-brand {
+  margin: 0;
+  font-family: var(--font-display);
+  color: var(--sea);
+  letter-spacing: 0.04em;
+}
+
+.auth-card h1 {
+  margin: 0.35rem 0 0;
+  font-family: var(--font-display);
+  font-size: 1.8rem;
+}
+
+.auth-lead {
+  margin: 0.55rem 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+  margin-top: 1.15rem;
+}
+
+.auth-tabs button {
+  min-height: 2.3rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.auth-tabs button.active {
+  background: var(--foam);
+  border-color: rgba(26, 107, 99, 0.35);
+  color: var(--sea-deep);
+  font-weight: 600;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.auth-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.auth-form input {
+  min-height: 2.5rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.auth-submit {
+  width: 100%;
+  margin-top: 0.25rem;
+}
+
+.admin-page {
+  min-height: 100svh;
+  background:
+    radial-gradient(900px 420px at 0% 0%, #d7ebe6 0%, transparent 55%),
+    linear-gradient(180deg, #f7f4ef 0%, #eef5f2 100%);
+}
+
+.admin-topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem clamp(1rem, 3vw, 2rem);
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 253, 249, 0.9);
+}
+
+.admin-brand {
+  margin: 0;
+  color: var(--sea);
+  font-size: 0.88rem;
+}
+
+.admin-topbar h1 {
+  margin: 0.25rem 0 0;
+  font-family: var(--font-display);
+  font-size: 1.55rem;
+}
+
+.admin-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.admin-main {
+  padding: 1.1rem clamp(1rem, 3vw, 2rem) 2rem;
+}
+
+.admin-create {
+  margin-bottom: 1.25rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 252, 248, 0.92);
+}
+
+.admin-create h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  color: var(--sea-deep);
+}
+
+.admin-create-lead {
+  margin: 0.35rem 0 0.85rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.admin-create-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem 1rem;
+}
+
+.admin-create-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 10rem;
+  flex: 1 1 10rem;
+  color: var(--sea-deep);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.admin-create-form input {
+  min-height: 2.4rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  font: inherit;
+  font-weight: 400;
+}
+
+.admin-create-form .btn {
+  min-height: 2.4rem;
+  align-self: flex-end;
+}
+
+.form-hint.ok {
+  color: var(--sea-deep);
+}
+
+.admin-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.admin-toolbar p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  max-width: 40rem;
+}
+
+.admin-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 252, 248, 0.9);
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 48rem;
+}
+
+.admin-table th,
+.admin-table td {
+  padding: 0.75rem 0.85rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  font-size: 0.9rem;
+}
+
+.admin-table th {
+  background: rgba(231, 242, 239, 0.55);
+  color: var(--sea-deep);
+  font-weight: 600;
+}
+
+.admin-table tr.disabled {
+  opacity: 0.62;
+}
+
+.admin-empty {
+  text-align: center;
+  color: var(--muted);
+}
+
+.admin-status {
+  display: inline-flex;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.admin-status.on {
+  background: rgba(26, 107, 99, 0.12);
+  color: var(--sea-deep);
+}
+
+.admin-status.off {
+  background: rgba(155, 59, 46, 0.1);
+  color: var(--danger);
+}
+
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.admin-actions button {
+  min-height: 1.9rem;
+  padding: 0 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  color: var(--sea-deep);
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+
+.admin-actions button.danger {
+  color: var(--danger);
+  border-color: rgba(155, 59, 46, 0.3);
+}
+
+.admin-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.admin-muted {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.admin-account-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  color: var(--sea-deep);
 }
 
 .brand-mark {
@@ -1025,6 +1398,41 @@ main {
   gap: 0.75rem 0.85rem;
   padding: 0.85rem 0;
   border-bottom: 1px solid var(--line);
+}
+
+.dest-pick {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  grid-column: 1 / -1;
+  width: 100%;
+  cursor: pointer;
+}
+
+.dest-pick input {
+  margin-top: 0.4rem;
+  flex-shrink: 0;
+}
+
+.dest-pick .dest-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.companion-pick-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0 0 0.75rem;
+}
+
+.planner.companion-pick .dest-list {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0 0.75rem;
+  background: rgba(255, 252, 248, 0.75);
 }
 
 .dest-index {

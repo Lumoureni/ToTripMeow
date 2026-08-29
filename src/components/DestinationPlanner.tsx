@@ -13,6 +13,10 @@ type Props = {
   readOnly?: boolean
   /** 预览下允许上下调整顺序（不可增删） */
   allowArrange?: boolean
+  /** 同步同行：只读，可勾选途径点加入本人行程 */
+  companionPick?: boolean
+  companionName?: string
+  onAddCompanionWaypoints?: (places: Destination[]) => void
 }
 
 export function DestinationPlanner({
@@ -23,6 +27,9 @@ export function DestinationPlanner({
   onReorder,
   readOnly = false,
   allowArrange = false,
+  companionPick = false,
+  companionName,
+  onAddCompanionWaypoints,
 }: Props) {
   const inputId = useId()
   const pasteId = useId()
@@ -39,6 +46,11 @@ export function DestinationPlanner({
   const [parseError, setParseError] = useState<string | null>(null)
   const [resolved, setResolved] = useState<ResolvedPlace[]>([])
   const [selected, setSelected] = useState<Record<string, boolean>>({})
+  const [pickedIds, setPickedIds] = useState<Record<string, boolean>>({})
+
+  useEffect(() => {
+    setPickedIds({})
+  }, [destinations])
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -49,6 +61,7 @@ export function DestinationPlanner({
   }, [])
 
   useEffect(() => {
+    if (readOnly || companionPick) return
     if (debounceRef.current) window.clearTimeout(debounceRef.current)
     const q = query.trim()
     if (q.length < 2) {
@@ -74,16 +87,11 @@ export function DestinationPlanner({
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current)
     }
-  }, [query])
+  }, [query, readOnly, companionPick])
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
-    if (suggestions[0]) {
-      onAdd(suggestions[0])
-      setQuery('')
-      setSuggestions([])
-      setOpen(false)
-    }
+    if (suggestions[0]) pick(suggestions[0])
   }
 
   const pick = (place: Destination) => {
@@ -95,67 +103,71 @@ export function DestinationPlanner({
 
   const handleParse = async () => {
     const text = pasteText.trim()
-    if (text.length < 2) {
-      setParseError('请先粘贴包含地点的行程或攻略文本')
+    if (!text) {
+      setParseError('请先粘贴一段行程文字')
       return
     }
     setParsing(true)
     setParseError(null)
-    setResolved([])
     try {
-      const results = await resolvePlacesFromText(text)
-      if (results.length === 0) {
-        setParseError('未能识别出地点，可试试写清地名，例如「杭州西湖 → 灵隐寺 → 宋城」')
-        return
-      }
-      setResolved(results)
-      const nextSelected: Record<string, boolean> = {}
-      results.forEach((item, index) => {
-        nextSelected[`${item.query}-${index}`] = Boolean(item.place)
+      const items = await resolvePlacesFromText(text)
+      setResolved(items)
+      const next: Record<string, boolean> = {}
+      items.forEach((item, index) => {
+        next[`${item.query}-${index}`] = Boolean(item.place)
       })
-      setSelected(nextSelected)
-      if (results.every((r) => !r.place)) {
-        setParseError('识别到候选词，但高德未能匹配到具体地点，请改写后再试')
-      }
+      setSelected(next)
+      if (items.length === 0) setParseError('没有识别到地点名称，试试更具体的写法')
     } catch (err) {
       setParseError(err instanceof Error ? err.message : '识别失败')
+      setResolved([])
     } finally {
       setParsing(false)
     }
   }
 
   const handleAddResolved = () => {
-    const places = resolved.flatMap((item, index) => {
-      const key = `${item.query}-${index}`
-      if (!selected[key] || !item.place) return []
-      return [item.place]
-    })
-    if (places.length === 0) {
-      setParseError('请至少勾选一个已匹配的地点')
-      return
-    }
+    const places = resolved
+      .map((item, index) => {
+        const key = `${item.query}-${index}`
+        if (!selected[key] || !item.place) return null
+        return item.place
+      })
+      .filter((p): p is Destination => Boolean(p))
+    if (places.length === 0) return
     onAddMany(places)
+    setPasteText('')
     setResolved([])
     setSelected({})
     setParseError(null)
   }
 
   const matchedCount = resolved.filter((r) => r.place).length
+  const pickedCount = Object.values(pickedIds).filter(Boolean).length
+  const locked = readOnly || companionPick
+
+  const title = companionPick
+    ? `${companionName || '同行'}的行程`
+    : readOnly
+      ? '全部地点预览'
+      : '添加目的地'
+
+  const lead = companionPick
+    ? '对方路径只读。勾选途径点后可加入你自己的行程，不能修改或优化对方路线。'
+    : readOnly
+      ? allowArrange
+        ? '汇总所有旅客地点。可用「优化路线」或上下箭头重排顺序（不改写各旅客原行程）。'
+        : '汇总所有旅客已选地点（按坐标去重）。预览模式不可编辑，请切换到具体旅客后再修改。'
+      : '粘贴行程文字自动识别地点，也可单独搜索添加；系统会按顺序规划驾车路线。'
 
   return (
-    <div className={`planner${readOnly ? ' read-only' : ''}`}>
+    <div className={`planner${locked ? ' read-only' : ''}${companionPick ? ' companion-pick' : ''}`}>
       <div className="section-head">
-        <h2>{readOnly ? '全部地点预览' : '添加目的地'}</h2>
-        <p>
-          {readOnly
-            ? allowArrange
-              ? '汇总所有旅客地点。可用「优化路线」或上下箭头重排顺序（不改写各旅客原行程）。'
-              : '汇总所有旅客已选地点（按坐标去重）。预览模式不可编辑，请切换到具体旅客后再修改。'
-            : '粘贴行程文字自动识别地点，也可单独搜索添加；系统会按顺序规划驾车路线。'}
-        </p>
+        <h2>{title}</h2>
+        <p>{lead}</p>
       </div>
 
-      {!readOnly && (
+      {!locked && (
         <div className="paste-panel">
           <label htmlFor={pasteId}>粘贴行程 / 攻略片段</label>
           <textarea
@@ -211,7 +223,7 @@ export function DestinationPlanner({
         </div>
       )}
 
-      {!readOnly && (
+      {!locked && (
         <form className="search-form" onSubmit={handleSubmit} ref={wrapRef}>
           <p className="search-label">或单独搜索添加</p>
           <label htmlFor={inputId} className="sr-only">
@@ -247,48 +259,99 @@ export function DestinationPlanner({
         </form>
       )}
 
+      {companionPick && destinations.length > 0 && (
+        <div className="companion-pick-bar">
+          <button
+            type="button"
+            className="btn-parse"
+            disabled={pickedCount === 0 || !onAddCompanionWaypoints}
+            onClick={() => {
+              const places = destinations.filter((d) => pickedIds[d.id])
+              onAddCompanionWaypoints?.(places)
+              setPickedIds({})
+            }}
+          >
+            添加到我的行程（{pickedCount}）
+          </button>
+          <button
+            type="button"
+            className="btn-parse secondary"
+            onClick={() => {
+              const next: Record<string, boolean> = {}
+              for (const d of destinations) next[d.id] = true
+              setPickedIds(next)
+            }}
+          >
+            全选
+          </button>
+        </div>
+      )}
+
       <ol className="dest-list">
         {destinations.length === 0 && (
           <li className="dest-empty">
-            {readOnly ? '各旅客尚未添加地点。' : '还没有目的地，粘贴一段行程或搜索添加第一站吧。'}
+            {companionPick
+              ? '对方尚未添加地点。'
+              : readOnly
+                ? '各旅客尚未添加地点。'
+                : '还没有目的地，粘贴一段行程或搜索添加第一站吧。'}
           </li>
         )}
         {destinations.map((d, index) => (
           <li key={d.id} className="dest-item">
-            <span className="dest-index">{index + 1}</span>
-            <div className="dest-body">
-              <strong>{d.name}</strong>
-              <span>{d.displayName}</span>
-              {readOnly && d.ownerName && (
-                <span className="dest-owner" style={{ color: d.ownerColor || undefined }}>
-                  来自 {d.ownerName}
+            {companionPick ? (
+              <label className="dest-pick">
+                <input
+                  type="checkbox"
+                  checked={Boolean(pickedIds[d.id])}
+                  onChange={(e) =>
+                    setPickedIds((prev) => ({ ...prev, [d.id]: e.target.checked }))
+                  }
+                />
+                <span className="dest-index">{index + 1}</span>
+                <span className="dest-body">
+                  <strong>{d.name}</strong>
+                  <span>{d.displayName}</span>
                 </span>
-              )}
-            </div>
-            {(!readOnly || allowArrange) && (
-              <div className="dest-actions">
-                <button
-                  type="button"
-                  aria-label="上移"
-                  disabled={index === 0}
-                  onClick={() => onReorder(index, index - 1)}
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  aria-label="下移"
-                  disabled={index === destinations.length - 1}
-                  onClick={() => onReorder(index, index + 1)}
-                >
-                  ↓
-                </button>
-                {!readOnly && (
-                  <button type="button" className="danger" onClick={() => onRemove(d.id)}>
-                    移除
-                  </button>
+              </label>
+            ) : (
+              <>
+                <span className="dest-index">{index + 1}</span>
+                <div className="dest-body">
+                  <strong>{d.name}</strong>
+                  <span>{d.displayName}</span>
+                  {readOnly && d.ownerName && (
+                    <span className="dest-owner" style={{ color: d.ownerColor || undefined }}>
+                      来自 {d.ownerName}
+                    </span>
+                  )}
+                </div>
+                {(!readOnly || allowArrange) && (
+                  <div className="dest-actions">
+                    <button
+                      type="button"
+                      aria-label="上移"
+                      disabled={index === 0}
+                      onClick={() => onReorder(index, index - 1)}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="下移"
+                      disabled={index === destinations.length - 1}
+                      onClick={() => onReorder(index, index + 1)}
+                    >
+                      ↓
+                    </button>
+                    {!readOnly && (
+                      <button type="button" className="danger" onClick={() => onRemove(d.id)}>
+                        移除
+                      </button>
+                    )}
+                  </div>
                 )}
-              </div>
+              </>
             )}
           </li>
         ))}

@@ -1,22 +1,40 @@
 import type { Destination } from '../types'
 import type { Workspace } from '../utils/tripStorage'
 import { saveWorkspace } from '../utils/tripStorage'
+import { clearAuthSession, getAuthToken } from '../utils/authStorage'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getAuthToken()
   let res: Response
   try {
     res = await fetch(path, {
-      headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(init?.headers || {}),
+      },
       ...init,
     })
   } catch {
     throw new Error('无法连接后端，请先运行 npm run dev（需同时启动 API）')
   }
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(text || `请求失败 HTTP ${res.status}`)
+  if (res.status === 401) {
+    clearAuthSession()
+    throw new Error('登录已过期，请重新登录')
   }
-  return (await res.json()) as T
+  const text = await res.text()
+  if (!res.ok) {
+    let message = `请求失败 HTTP ${res.status}`
+    try {
+      const body = JSON.parse(text) as { error?: string }
+      if (body.error) message = body.error
+    } catch {
+      if (text) message = text
+    }
+    throw new Error(message)
+  }
+  if (!text) return {} as T
+  return JSON.parse(text) as T
 }
 
 function cache(workspace: Workspace) {
@@ -25,7 +43,14 @@ function cache(workspace: Workspace) {
 }
 
 export async function apiHealth(): Promise<{ ok: boolean; amapConfigured: boolean }> {
-  return request('/api/health')
+  let res: Response
+  try {
+    res = await fetch('/api/health')
+  } catch {
+    throw new Error('无法连接后端，请先运行 npm run dev（需同时启动 API）')
+  }
+  if (!res.ok) throw new Error(`健康检查失败 HTTP ${res.status}`)
+  return (await res.json()) as { ok: boolean; amapConfigured: boolean }
 }
 
 export async function apiGetWorkspace(): Promise<Workspace> {
@@ -46,6 +71,15 @@ export async function apiAddUser(name: string): Promise<Workspace> {
     await request<Workspace>('/api/workspace/users', {
       method: 'POST',
       body: JSON.stringify({ name }),
+    }),
+  )
+}
+
+export async function apiLinkCompanion(username: string, password: string): Promise<Workspace> {
+  return cache(
+    await request<Workspace>('/api/workspace/users/link', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
     }),
   )
 }
