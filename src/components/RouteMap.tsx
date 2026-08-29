@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { loadAMap } from '../api/amap'
-import type { Destination, RouteInfo } from '../types'
+import type { MapTravelerLayer } from '../types'
 
 type Props = {
-  destinations: Destination[]
-  route: RouteInfo | null
+  layers: MapTravelerLayer[]
 }
 
-export function RouteMap({ destinations, route }: Props) {
+export function RouteMap({ layers }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
   const overlaysRef = useRef<any[]>([])
@@ -60,45 +59,58 @@ export function RouteMap({ destinations, route }: Props) {
     overlaysRef.current = []
 
     const AMap = window.AMap
-    const markers = destinations.map((d, index) => {
-      const marker = new AMap.Marker({
-        position: [d.lon, d.lat],
-        title: d.name,
-        label: {
-          content: `<span class="amap-label">${index + 1}</span>`,
-          direction: 'top',
-        },
-      })
-      marker.setMap(map)
-      return marker
-    })
-    overlaysRef.current.push(...markers)
+    const visible = layers.filter((layer) => layer.destinations.length > 0)
+    // 当前旅客最后绘制，压在最上层
+    const ordered = [...visible].sort((a, b) => Number(Boolean(a.emphasized)) - Number(Boolean(b.emphasized)))
 
-    if (route && route.coordinates.length > 1) {
-      const path = route.coordinates.map(([lat, lon]) => [lon, lat])
-      const line = new AMap.Polyline({
-        path,
-        strokeColor: '#1a6b63',
-        strokeWeight: 6,
-        strokeOpacity: 0.9,
-        lineJoin: 'round',
-        lineCap: 'round',
+    for (const layer of ordered) {
+      const weight = layer.emphasized ? 7 : 5
+      const opacity = layer.emphasized ? 0.95 : 0.72
+
+      const markers = layer.destinations.map((d, index) => {
+        const marker = new AMap.Marker({
+          position: [d.lon, d.lat],
+          title: `${layer.name} · ${d.name}`,
+          label: {
+            content: `<span class="amap-stop-label" style="--stop-color:${layer.color}">${index + 1}</span>`,
+            direction: 'top',
+            offset: new AMap.Pixel(0, -4),
+          },
+        })
+        marker.setMap(map)
+        return marker
       })
-      map.add(line)
-      overlaysRef.current.push(line)
-      map.setFitView(overlaysRef.current, false, [48, 48, 48, 48])
+      overlaysRef.current.push(...markers)
+
+      if (layer.route && layer.route.coordinates.length > 1) {
+        const path = layer.route.coordinates.map(([lat, lon]) => [lon, lat])
+        const line = new AMap.Polyline({
+          path,
+          strokeColor: layer.color,
+          strokeWeight: weight,
+          strokeOpacity: opacity,
+          lineJoin: 'round',
+          lineCap: 'round',
+          zIndex: layer.emphasized ? 120 : 80,
+        })
+        map.add(line)
+        overlaysRef.current.push(line)
+      }
+    }
+
+    if (overlaysRef.current.length === 0) {
+      map.setZoomAndCenter(5, [104.195397, 35.86166])
       return
     }
 
-    if (destinations.length === 1) {
-      map.setZoomAndCenter(12, [destinations[0].lon, destinations[0].lat])
+    if (overlaysRef.current.length === 1 && visible.length === 1 && visible[0].destinations.length === 1) {
+      const only = visible[0].destinations[0]
+      map.setZoomAndCenter(12, [only.lon, only.lat])
       return
     }
 
-    if (destinations.length > 1) {
-      map.setFitView(markers, false, [48, 48, 48, 48])
-    }
-  }, [destinations, route, mapReady])
+    map.setFitView(overlaysRef.current, false, [48, 48, 48, 48])
+  }, [layers, mapReady])
 
   return (
     <div className="map-shell">

@@ -1,4 +1,11 @@
-import type { Destination, GuideCategory, GuidePlace, PlaceBrief, RouteInfo } from '../types'
+import type {
+  Destination,
+  GuideCategory,
+  GuidePlace,
+  PlaceBrief,
+  RouteInfo,
+  RouteOption,
+} from '../types'
 import { extractPlaceCandidates } from '../utils/extractPlaces'
 
 type AmapStatus = { status: string; info: string; infocode?: string }
@@ -148,7 +155,10 @@ export async function resolvePlacesFromText(text: string): Promise<ResolvedPlace
   return results
 }
 
-export async function fetchRoute(destinations: Destination[]): Promise<RouteInfo | null> {
+export async function fetchRoute(
+  destinations: Destination[],
+  strategy: string = '0',
+): Promise<RouteInfo | null> {
   if (destinations.length < 2) return null
 
   const origin = `${destinations[0].lon},${destinations[0].lat}`
@@ -158,7 +168,7 @@ export async function fetchRoute(destinations: Destination[]): Promise<RouteInfo
     origin,
     destination,
     extensions: 'all',
-    strategy: '0',
+    strategy,
   }
   if (middle.length > 0) {
     params.waypoints = middle.map((d) => `${d.lon},${d.lat}`).join(';')
@@ -174,7 +184,6 @@ export async function fetchRoute(destinations: Destination[]): Promise<RouteInfo
 
   const coordinates = (path.steps || []).flatMap((step) => parsePolyline(step.polyline))
   if (coordinates.length === 0) {
-    // fallback: straight lines between destinations
     destinations.forEach((d) => coordinates.push([d.lat, d.lon]))
   }
 
@@ -182,7 +191,182 @@ export async function fetchRoute(destinations: Destination[]): Promise<RouteInfo
     coordinates,
     distanceKm: Number(path.distance) / 1000,
     durationMin: Number(path.duration) / 60,
+    strategy,
   }
+}
+
+function haversineKm(a: Destination, b: Destination) {
+  const R = 6371
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const dLat = toRad(b.lat - a.lat)
+  const dLon = toRad(b.lon - a.lon)
+  const x =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLon / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(x))
+}
+
+function pathLengthKm(order: Destination[]) {
+  let sum = 0
+  for (let i = 0; i < order.length - 1; i += 1) {
+    sum += haversineKm(order[i], order[i + 1])
+  }
+  return sum
+}
+
+function permute<T>(items: T[]): T[][] {
+  if (items.length <= 1) return [items]
+  const result: T[][] = []
+  for (let i = 0; i < items.length; i += 1) {
+    const rest = [...items.slice(0, i), ...items.slice(i + 1)]
+    for (const p of permute(rest)) {
+      result.push([items[i], ...p])
+    }
+  }
+  return result
+}
+
+/** 固定首尾，按直线距离搜索更优的途径点顺序 */
+export function optimizeWaypointOrderByDistance(destinations: Destination[]): Destination[] {
+  if (destinations.length <= 3) return destinations
+  const start = destinations[0]
+  const end = destinations[destinations.length - 1]
+  const middle = destinations.slice(1, -1)
+  if (middle.length > 5) {
+    // 贪心：每次选距当前点最近的未访问途径点
+    const remaining = [...middle]
+    const ordered: Destination[] = [start]
+    while (remaining.length > 0) {
+      const cur = ordered[ordered.length - 1]
+      let bestIdx = 0
+      let bestDist = Infinity
+      remaining.forEach((p, i) => {
+        const d = haversineKm(cur, p)
+        if (d < bestDist) {
+          bestDist = d
+          bestIdx = i
+        }
+      })
+      ordered.push(remaining.splice(bestIdx, 1)[0])
+    }
+    ordered.push(end)
+    return ordered
+  }
+
+  let best = destinations
+  let bestLen = pathLengthKm(destinations)
+  for (const mid of permute(middle)) {
+    const candidate = [start, ...mid, end]
+    const len = pathLengthKm(candidate)
+    if (len < bestLen) {
+      bestLen = len
+      best = candidate
+    }
+  }
+  return best
+}
+
+function sameOrder(a: Destination[], b: Destination[]) {
+  if (a.length !== b.length) return false
+  return a.every((d, i) => d.id === b[i].id)
+}
+
+/** 生成多套路线方案：当前顺序/重排途径点 × 最短用时/最短距离 */
+export async function fetchOptimizedRouteOptions(
+  destinations: Destination[],
+): Promise<RouteOption[]> {
+  if (destinations.length < 2) return []
+
+  const jobs: Array<{
+    id: string
+    label: string
+    sortKey: 'distance' | 'duration'
+    order: Destination[]
+    strategy: string
+  }> = [
+    {
+      id: 'current-time',
+      label: '当前顺序 · 最短用时',
+      sortKey: 'duration',
+      order: destinations,
+      strategy: '0',
+    },
+    {
+      id: 'current-distance',
+      label: '当前顺序 · 最短距离',
+      sortKey: 'distance',
+      order: destinations,
+      strategy: '2',
+    },
+  ]
+
+  if (destinations.length >= 3) {
+    const reordered = optimizeWaypointOrderByDistance(destinations)
+    if (!sameOrder(reordered, destinations)) {
+      jobs.push(
+        {
+          id: 'reorder-time',
+          label: '重排途径点 · 最短用时',
+          sortKey: 'duration',
+          order: reordered,
+          strategy: '0',
+        },
+        {
+          id: 'reorder-distance',
+          label: '重排途径点 · 最短距离',
+          sortKey: 'distance',
+          order: reordered,
+          strategy: '2',
+        },
+      )
+    }
+  }
+
+  const options: RouteOption[] = []
+  for (const job of jobs) {
+    try {
+      const route = await fetchRoute(job.order, job.strategy)
+      if (!route) continue
+      options.push({
+        id: job.id,
+        label: job.label,
+        sortKey: job.sortKey,
+        destinations: job.order,
+        route: { ...route, label: job.label },
+      })
+      await new Promise((r) => setTimeout(r, 120))
+    } catch {
+      // skip failed strategy
+    }
+  }
+
+  // 相同停靠顺序且距离/用时几乎一致时去重（高德不同策略常返回相同结果）
+  const unique: RouteOption[] = []
+  for (const opt of options) {
+    const twin = unique.find(
+      (u) =>
+        sameOrder(u.destinations, opt.destinations) &&
+        Math.abs(u.route.distanceKm - opt.route.distanceKm) < 0.15 &&
+        Math.abs(u.route.durationMin - opt.route.durationMin) < 1.5,
+    )
+    if (twin) {
+      if (opt.sortKey === 'distance' && twin.sortKey === 'duration') {
+        twin.label = twin.label.replace(/ · 最短用时$/, ' · 距离/用时最优')
+        twin.route.label = twin.label
+      } else if (opt.sortKey === 'duration' && twin.sortKey === 'distance') {
+        twin.label = twin.label.replace(/ · 最短距离$/, ' · 距离/用时最优')
+        twin.route.label = twin.label
+      }
+      continue
+    }
+    unique.push(opt)
+  }
+
+  return unique.sort((a, b) => {
+    const d = a.route.distanceKm - b.route.distanceKm
+    if (Math.abs(d) > 0.05) return d
+    return a.route.durationMin - b.route.durationMin
+  })
 }
 
 export async function fetchNearbyGuides(

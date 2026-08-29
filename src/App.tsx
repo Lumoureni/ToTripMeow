@@ -6,6 +6,7 @@ import {
   apiGetWorkspace,
   apiHealth,
   apiPutActiveTrip,
+  apiPutWorkspace,
   apiRemoveUser,
   apiRenameUser,
   apiSwitchUser,
@@ -15,21 +16,28 @@ import { ExportPanel } from './components/ExportPanel'
 import { Hero } from './components/Hero'
 import { NearbyGuides } from './components/NearbyGuides'
 import { RouteMap } from './components/RouteMap'
+import { RouteOptimizePanel } from './components/RouteOptimizePanel'
 import { UserWorkspace } from './components/UserWorkspace'
 import {
   addUser,
+  aggregateTravelerDestinations,
   clearActiveTrip,
   formatSavedAt,
   getActiveUser,
+  isPreviewUser,
+  listTravelers,
   loadWorkspace,
+  PREVIEW_COLOR,
+  PREVIEW_USER_ID,
   removeUser,
   renameUser,
   saveWorkspace,
   switchUser,
   upsertActiveTrip,
+  withPreviewUser,
   type Workspace,
 } from './utils/tripStorage'
-import type { Destination, RouteInfo } from './types'
+import type { Destination, GuidePlace, MapTravelerLayer, RouteInfo, RouteOption } from './types'
 import './App.css'
 
 function formatDuration(minutes: number) {
@@ -53,19 +61,30 @@ export default function App() {
   const [route, setRoute] = useState<RouteInfo | null>(null)
   const [routeLoading, setRouteLoading] = useState(false)
   const [routeError, setRouteError] = useState<string | null>(null)
+  const [peerRoutes, setPeerRoutes] = useState<Record<string, RouteInfo | null>>({})
+  const [peerRoutesLoading, setPeerRoutesLoading] = useState(false)
   const [hydrated, setHydrated] = useState(false)
   const [backendOnline, setBackendOnline] = useState(false)
   const [syncHint, setSyncHint] = useState<string | null>(null)
   const skipNextSave = useRef(false)
+  const skipRouteFetch = useRef(false)
+  const routeStrategy = useRef('0')
+  /** 丢弃过期后端响应，避免切换旅客/预览后被旧请求打回 */
+  const workspaceEpoch = useRef(0)
+  /** 预览下已优化/手动重排后，不再被汇总列表覆盖 */
+  const previewLayoutLocked = useRef(false)
 
   const activeUser = getActiveUser(workspace)
+  const previewMode = isPreviewUser(activeUser)
 
   const applyUserTrip = (nextWorkspace: Workspace, options?: { skipSave?: boolean }) => {
-    const user = getActiveUser(nextWorkspace)
+    const normalized = withPreviewUser(nextWorkspace)
+    const user = getActiveUser(normalized)
+    workspaceEpoch.current += 1
     if (options?.skipSave) skipNextSave.current = true
-    workspaceRef.current = nextWorkspace
-    saveWorkspace(nextWorkspace)
-    setWorkspace(nextWorkspace)
+    workspaceRef.current = normalized
+    saveWorkspace(normalized)
+    setWorkspace(normalized)
     setDestinations(user.destinations)
     setActiveGuideId(user.activeGuideId)
     setSavedAt(user.savedAt)
@@ -104,31 +123,56 @@ export default function App() {
       skipNextSave.current = false
       return
     }
+    if (previewMode) return
 
     // always keep local cache warm
     const local = upsertActiveTrip(workspaceRef.current, destinations, activeGuideId)
     workspaceRef.current = local
-    setWorkspace(local)
+    setWorkspace(withPreviewUser(local))
     setSavedAt(getActiveUser(local).savedAt)
 
     if (!backendOnline) return
 
+    const epochAtStart = workspaceEpoch.current
+    const activeIdAtStart = workspaceRef.current.activeUserId
     const timer = window.setTimeout(() => {
       void apiPutActiveTrip(destinations, activeGuideId)
         .then((remote) => {
-          workspaceRef.current = remote
-          setWorkspace(remote)
-          setSavedAt(getActiveUser(remote).savedAt)
+          // 切换旅客后丢弃过期响应，防止把 activeUser 打回上一个用户
+          if (epochAtStart !== workspaceEpoch.current) return
+          if (workspaceRef.current.activeUserId !== activeIdAtStart) return
+          const normalized = withPreviewUser({
+            ...remote,
+            activeUserId: activeIdAtStart,
+          })
+          workspaceRef.current = normalized
+          setWorkspace(normalized)
+          setSavedAt(getActiveUser(normalized).savedAt)
           setSyncHint('已同步到后端')
         })
         .catch(() => {
+          if (epochAtStart !== workspaceEpoch.current) return
           setBackendOnline(false)
           setSyncHint('后端同步失败，已改回本机保存')
         })
     }, 450)
 
     return () => window.clearTimeout(timer)
-  }, [destinations, activeGuideId, hydrated, backendOnline])
+  }, [destinations, activeGuideId, hydrated, backendOnline, previewMode])
+
+  // 预览模式：进入时用汇总填充；优化/重排后锁定，离开预览时解锁
+  useEffect(() => {
+    if (!previewMode) {
+      previewLayoutLocked.current = false
+      return
+    }
+    if (previewLayoutLocked.current) return
+    const aggregated = aggregateTravelerDestinations(workspace.users)
+    setDestinations(aggregated)
+    setActiveGuideId((cur) =>
+      aggregated.some((d) => d.id === cur) ? cur : aggregated[0]?.id ?? null,
+    )
+  }, [previewMode, workspace.users])
 
   const runWorkspaceAction = async (action: () => Promise<Workspace>) => {
     // flush current trip locally first
@@ -151,15 +195,27 @@ export default function App() {
   }
 
   const handleSwitchUser = (userId: string) => {
+    // 先本地切换，保证顶栏/侧栏立刻更新
+    const flushed = upsertActiveTrip(workspaceRef.current, destinations, activeGuideId)
+    const localNext = switchUser(flushed, userId)
+    applyUserTrip(localNext, { skipSave: true })
+    const epoch = workspaceEpoch.current
+
     void (async () => {
+      if (!backendOnline) return
       try {
-        await runWorkspaceAction(async () => {
-          if (backendOnline) return apiSwitchUser(userId)
-          return switchUser(workspaceRef.current, userId)
-        })
+        // 先把含预览用户的本地工作区推到后端，再切换，避免服务端无预览 ID 导致打回
+        await apiPutWorkspace(localNext)
+        if (epoch !== workspaceEpoch.current) return
+        const remote = await apiSwitchUser(userId)
+        if (epoch !== workspaceEpoch.current) return
+        applyUserTrip(withPreviewUser({ ...remote, activeUserId: userId }), { skipSave: true })
+        setBackendOnline(true)
+        setSyncHint('已同步到后端')
       } catch {
-        const flushed = upsertActiveTrip(workspaceRef.current, destinations, activeGuideId)
-        applyUserTrip(switchUser(flushed, userId), { skipSave: true })
+        // 保持本地已切换的状态
+        setBackendOnline(false)
+        setSyncHint('后端不可用，已使用本机数据')
       }
     })()
   }
@@ -209,6 +265,7 @@ export default function App() {
   }
 
   const addDestination = (place: Destination) => {
+    if (previewMode) return
     const next: Destination = { ...place, id: crypto.randomUUID() }
     setDestinations((prev) => {
       if (prev.some((d) => Math.abs(d.lat - place.lat) < 1e-5 && Math.abs(d.lon - place.lon) < 1e-5)) {
@@ -220,6 +277,7 @@ export default function App() {
   }
 
   const addDestinations = (places: Destination[]) => {
+    if (previewMode) return
     const additions = places.map((place) => ({ ...place, id: crypto.randomUUID() }))
     setDestinations((prev) => {
       const next = [...prev]
@@ -237,7 +295,49 @@ export default function App() {
     }
   }
 
+  /** 从周边攻略加入途径点：插在当前选中站之后；若选中为最后一站则插在倒数第二（保持终点） */
+  const addWaypointFromGuide = (place: GuidePlace) => {
+    if (previewMode) return
+    const point: Destination = {
+      id: crypto.randomUUID(),
+      name: place.name,
+      displayName: place.address || place.name,
+      lat: place.lat,
+      lon: place.lon,
+      address: place.address,
+    }
+    setDestinations((prev) => {
+      if (prev.some((d) => Math.abs(d.lat - point.lat) < 1e-5 && Math.abs(d.lon - point.lon) < 1e-5)) {
+        return prev
+      }
+      if (prev.length === 0) return [point]
+      const activeIndex = Math.max(
+        0,
+        prev.findIndex((d) => d.id === activeGuideId),
+      )
+      let insertAt = activeIndex + 1
+      if (prev.length >= 2 && activeIndex === prev.length - 1) {
+        insertAt = prev.length - 1
+      }
+      const next = [...prev]
+      next.splice(insertAt, 0, point)
+      return next
+    })
+  }
+
+  const applyRouteOption = (option: RouteOption) => {
+    if (previewMode) previewLayoutLocked.current = true
+    skipRouteFetch.current = true
+    routeStrategy.current = option.route.strategy || '0'
+    setDestinations(option.destinations)
+    setRoute(option.route)
+    setRouteError(null)
+    setActiveGuideId(option.destinations[0]?.id ?? null)
+    setPlanTab('route')
+  }
+
   const importDestinations = (places: Destination[]) => {
+    if (previewMode) return
     const next = places.map((place) => ({ ...place, id: crypto.randomUUID() }))
     setDestinations(next)
     setActiveGuideId(next[0]?.id ?? null)
@@ -246,6 +346,7 @@ export default function App() {
   }
 
   const clearLocalTrip = () => {
+    if (previewMode) return
     void (async () => {
       try {
         if (backendOnline) {
@@ -273,6 +374,7 @@ export default function App() {
       next.splice(to, 0, item)
       return next
     })
+    if (previewMode) previewLayoutLocked.current = true
   }
 
   useEffect(() => {
@@ -283,6 +385,10 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false
+    if (skipRouteFetch.current) {
+      skipRouteFetch.current = false
+      return
+    }
     if (destinations.length < 2) {
       setRoute(null)
       setRouteError(null)
@@ -293,7 +399,7 @@ export default function App() {
       setRouteLoading(true)
       setRouteError(null)
       try {
-        const info = await fetchRoute(destinations)
+        const info = await fetchRoute(destinations, routeStrategy.current)
         if (!cancelled) setRoute(info)
       } catch (err) {
         if (!cancelled) {
@@ -310,80 +416,249 @@ export default function App() {
     }
   }, [destinations])
 
+  // 其他旅客路线：共用地图叠加；预览模式下仍拉各旅客路线作对照
+  const travelers = listTravelers(workspace.users)
+  const peersKey = travelers
+    .filter((u) => previewMode || u.id !== activeUser.id)
+    .map((u) => `${u.id}:${u.destinations.map((d) => `${d.id}@${d.lat},${d.lon}`).join('>')}`)
+    .join('|')
+
+  useEffect(() => {
+    let cancelled = false
+    const peers = travelers.filter((u) => previewMode || u.id !== activeUser.id)
+
+    const run = async () => {
+      if (peers.length === 0) {
+        setPeerRoutes({})
+        setPeerRoutesLoading(false)
+        return
+      }
+      setPeerRoutesLoading(true)
+      const next: Record<string, RouteInfo | null> = {}
+      for (const user of peers) {
+        if (user.destinations.length < 2) {
+          next[user.id] = null
+          continue
+        }
+        try {
+          next[user.id] = await fetchRoute(user.destinations, '0')
+        } catch {
+          next[user.id] = null
+        }
+        if (cancelled) return
+        await new Promise((r) => setTimeout(r, 100))
+      }
+      if (!cancelled) {
+        setPeerRoutes(next)
+        setPeerRoutesLoading(false)
+      }
+    }
+    void run()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peersKey, activeUser.id, previewMode])
+
+  const mapLayers: MapTravelerLayer[] = previewMode
+    ? [
+        ...travelers.map((user) => ({
+          id: user.id,
+          name: user.name,
+          color: user.color,
+          destinations: user.destinations,
+          route: peerRoutes[user.id] ?? null,
+          emphasized: false,
+        })),
+        {
+          id: PREVIEW_USER_ID,
+          name: '预览路线',
+          color: PREVIEW_COLOR,
+          destinations,
+          route,
+          emphasized: true,
+        },
+      ]
+    : travelers.map((user) => {
+        const isActive = user.id === activeUser.id
+        return {
+          id: user.id,
+          name: user.name,
+          color: user.color,
+          destinations: isActive ? destinations : user.destinations,
+          route: isActive ? route : (peerRoutes[user.id] ?? null),
+          emphasized: isActive,
+        }
+      })
+
+  const sharedStats = mapLayers
+    .filter((layer) => layer.route)
+    .map((layer) => ({
+      name: layer.name,
+      color: layer.color,
+      distanceKm: layer.route!.distanceKm,
+      durationMin: layer.route!.durationMin,
+      emphasized: layer.emphasized,
+    }))
+
   const savedLabel = formatSavedAt(savedAt)
+  const [view, setView] = useState<'home' | 'plan'>('home')
+  const [planTab, setPlanTab] = useState<'route' | 'guides'>('route')
+
+  if (view === 'home') {
+    return (
+      <div id="top" className="page home-page">
+        <Hero
+          onStartPlan={() => {
+            setPlanTab('route')
+            setView('plan')
+          }}
+        />
+      </div>
+    )
+  }
 
   return (
-    <div id="top" className="page">
-      <Hero activeUserName={activeUser.name} />
-
-      <main>
-        <div className={`backend-banner${backendOnline ? ' online' : ' offline'}`}>
-          <span>{backendOnline ? '后端已连接' : '后端离线'}</span>
-          <span>{syncHint || (backendOnline ? '行程将同步到服务器' : '使用本机缓存')}</span>
+    <div id="top" className="page plan-page">
+      <header className="plan-topbar">
+        <div className="plan-topbar-left">
+          <button type="button" className="brand-mark dark" onClick={() => setView('home')}>
+            To Trip
+          </button>
+          <span className="plan-topbar-sep" aria-hidden="true">
+            /
+          </span>
+          <UserWorkspace
+            users={workspace.users}
+            activeUserId={workspace.activeUserId}
+            onSwitch={handleSwitchUser}
+            onAdd={handleAddUser}
+            onRename={handleRenameUser}
+            onRemove={handleRemoveUser}
+          />
         </div>
+        <div className="plan-topbar-right">
+          <div
+            className={`backend-pill${backendOnline ? ' online' : ' offline'}`}
+            title={syncHint || undefined}
+          >
+            {backendOnline ? '后端已连接' : '后端离线'}
+          </div>
+          <button type="button" className="plan-home-btn" onClick={() => setView('home')}>
+            返回首页
+          </button>
+        </div>
+      </header>
 
-        <UserWorkspace
-          users={workspace.users}
-          activeUserId={workspace.activeUserId}
-          onSwitch={handleSwitchUser}
-          onAdd={handleAddUser}
-          onRename={handleRenameUser}
-          onRemove={handleRemoveUser}
-        />
-
-        <section className="plan" id="plan">
+      <div className="plan-shell">
+        <aside className="plan-sidebar">
           <DestinationPlanner
             destinations={destinations}
             onAdd={addDestination}
             onAddMany={addDestinations}
             onRemove={removeDestination}
             onReorder={reorder}
+            readOnly={previewMode}
+            allowArrange={previewMode}
           />
+        </aside>
 
-          <div className="map-panel">
-            <div className="map-meta">
-              <div className="map-meta-row">
-                <h2>路线地图 · {activeUser.name}</h2>
-                {savedLabel && (
-                  <span className="save-badge" title="当前旅客行程保存状态">
-                    {activeUser.name} · {backendOnline ? '已同步' : '本机'} {savedLabel}
-                  </span>
-                )}
-              </div>
-              {routeLoading && <p>正在计算路线…</p>}
-              {routeError && <p className="error">{routeError}</p>}
-              {route && !routeLoading && (
-                <p>
-                  全程约 <strong>{route.distanceKm.toFixed(1)} km</strong>
-                  <span className="dot">·</span>
-                  预计 <strong>{formatDuration(route.durationMin)}</strong>
-                </p>
-              )}
-              {!route && !routeLoading && !routeError && (
-                <p>{destinations.length < 2 ? '至少添加两个目的地以生成路线。' : '等待路线…'}</p>
-              )}
-            </div>
-            <RouteMap destinations={destinations} route={route} />
-            <ExportPanel
-              destinations={destinations}
-              route={route}
-              savedAtLabel={savedLabel}
-              onImport={importDestinations}
-              onClearLocal={clearLocalTrip}
-            />
+        <section className="plan-main" id="plan">
+          <div className="plan-main-tabs" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={planTab === 'route'}
+              className={planTab === 'route' ? 'active' : undefined}
+              onClick={() => setPlanTab('route')}
+            >
+              路线地图
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={planTab === 'guides'}
+              className={planTab === 'guides' ? 'active' : undefined}
+              onClick={() => setPlanTab('guides')}
+            >
+              周边攻略
+            </button>
           </div>
+
+          {planTab === 'route' ? (
+            <div className="plan-route-stack">
+              <div className="map-panel plan-map-panel">
+                <div className="map-meta">
+                  <div className="map-meta-row">
+                    <h2>共用路线地图</h2>
+                    {savedLabel && (
+                      <span className="save-badge" title="当前旅客行程保存状态">
+                        {activeUser.name} · {backendOnline ? '已同步' : '本机'} {savedLabel}
+                      </span>
+                    )}
+                  </div>
+                  <p className="map-shared-hint">
+                    {previewMode
+                      ? '预览模式：可优化并重排全部汇总地点；粗线为预览路线，细线为各旅客原路线。'
+                      : `所有旅客的行程会叠在同一张地图上；粗线与高亮标记为当前旅客「${activeUser.name}」。`}
+                  </p>
+                  {(routeLoading || peerRoutesLoading) && <p>正在计算路线…</p>}
+                  {routeError && (
+                    <p className="error">
+                      {previewMode ? '预览' : activeUser.name}：{routeError}
+                    </p>
+                  )}
+                  {route && !routeLoading && previewMode && (
+                    <p>
+                      预览全程约 <strong>{route.distanceKm.toFixed(1)} km</strong>
+                      <span className="dot">·</span>
+                      预计 <strong>{formatDuration(route.durationMin)}</strong>
+                    </p>
+                  )}
+                  {sharedStats.length > 0 && (
+                    <ul className="map-legend">
+                      {sharedStats.map((item) => (
+                        <li key={item.name + item.distanceKm} className={item.emphasized ? 'active' : undefined}>
+                          <span className="map-legend-swatch" style={{ background: item.color }} />
+                          <span className="map-legend-name">{item.name}</span>
+                          <span className="map-legend-meta">
+                            {item.distanceKm.toFixed(1)} km · {formatDuration(item.durationMin)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {sharedStats.length === 0 && !routeLoading && !peerRoutesLoading && !routeError && (
+                    <p>
+                      {mapLayers.every((l) => l.destinations.length === 0)
+                        ? '任意旅客添加目的地后，将在此共用地图显示。'
+                        : '至少两位目的地的旅客会生成驾车路线并显示在地图上。'}
+                    </p>
+                  )}
+                </div>
+                <RouteMap layers={mapLayers} />
+              </div>
+              <RouteOptimizePanel destinations={destinations} onApply={applyRouteOption} />
+              <ExportPanel
+                destinations={destinations}
+                route={route}
+                savedAtLabel={savedLabel}
+                onImport={importDestinations}
+                onClearLocal={clearLocalTrip}
+              />
+            </div>
+          ) : (
+            <div className="plan-guides-panel">
+              <NearbyGuides
+                destinations={destinations}
+                activeId={activeGuideId}
+                onSelectDestination={setActiveGuideId}
+                onAddWaypoint={addWaypointFromGuide}
+              />
+            </div>
+          )}
         </section>
-
-        <NearbyGuides
-          destinations={destinations}
-          activeId={activeGuideId}
-          onSelectDestination={setActiveGuideId}
-        />
-      </main>
-
-      <footer className="site-footer">
-        <p>To Trip · Express 后端同步多旅客行程 · 高德地图 Web 服务由服务端代理</p>
-      </footer>
+      </div>
     </div>
   )
 }

@@ -1,37 +1,25 @@
 type Props = {
-  activeUserName?: string
+  onStartPlan: () => void
 }
 
-export function Hero({ activeUserName }: Props) {
+export function Hero({ onStartPlan }: Props) {
   return (
     <header className="hero">
       <div className="hero-media" aria-hidden="true" />
       <div className="hero-veil" aria-hidden="true" />
       <nav className="topbar">
-        <a className="brand-mark" href="#top">
+        <button type="button" className="brand-mark" onClick={() => window.scrollTo({ top: 0 })}>
           To Trip
-        </a>
-        <div className="top-links">
-          <a href="#users">旅客</a>
-          <a href="#plan">规划</a>
-          <a href="#guides">攻略</a>
-        </div>
+        </button>
       </nav>
       <div className="hero-copy">
         <p className="brand-hero">To Trip</p>
         <h1>把下一程，画成一条线</h1>
-        <p className="hero-lead">
-          {activeUserName
-            ? `多人可同时各自规划。当前：${activeUserName}`
-            : '添加目的地，看见路线，顺手摸清周边吃喝住行。'}
-        </p>
+        <p className="hero-lead">添加目的地，看见路线，顺手摸清周边吃喝住行。</p>
         <div className="hero-cta">
-          <a className="btn primary" href="#plan">
+          <button type="button" className="btn primary" onClick={onStartPlan}>
             开始规划
-          </a>
-          <a className="btn ghost" href="#users">
-            切换旅客
-          </a>
+          </button>
         </div>
       </div>
     </header>

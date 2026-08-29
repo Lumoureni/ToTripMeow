@@ -3,6 +3,9 @@ import type { Destination } from '../types'
 export const TRIP_STORAGE_KEY = 'to-trip:workspace-v2'
 const LEGACY_DRAFT_KEY = 'to-trip:draft-v1'
 
+export const PREVIEW_USER_ID = 'preview-all'
+export const PREVIEW_COLOR = '#4a5d78'
+
 export type TripUser = {
   id: string
   name: string
@@ -10,6 +13,8 @@ export type TripUser = {
   savedAt: string
   destinations: Destination[]
   activeGuideId: string | null
+  /** 预览用户：只读汇总所有旅客地点 */
+  role?: 'traveler' | 'preview'
 }
 
 export type Workspace = {
@@ -34,6 +39,61 @@ function isDestination(value: unknown): value is Destination {
   )
 }
 
+export function isPreviewUser(user: Pick<TripUser, 'id' | 'role'> | null | undefined): boolean {
+  if (!user) return false
+  return user.id === PREVIEW_USER_ID || user.role === 'preview'
+}
+
+export function listTravelers(users: TripUser[]): TripUser[] {
+  return users.filter((u) => !isPreviewUser(u))
+}
+
+/** 合并所有旅客地点（按坐标去重，保留首次出现顺序，并标注来源） */
+export function aggregateTravelerDestinations(users: TripUser[]): Destination[] {
+  const seen = new Set<string>()
+  const out: Destination[] = []
+  for (const user of listTravelers(users)) {
+    for (const d of user.destinations) {
+      const key = `${d.lat.toFixed(5)},${d.lon.toFixed(5)}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push({
+        ...d,
+        ownerName: user.name,
+        ownerColor: user.color,
+      })
+    }
+  }
+  return out
+}
+
+function createPreviewUser(destinations: Destination[]): TripUser {
+  return {
+    id: PREVIEW_USER_ID,
+    name: '预览',
+    role: 'preview',
+    color: PREVIEW_COLOR,
+    savedAt: new Date().toISOString(),
+    destinations,
+    activeGuideId: destinations[0]?.id ?? null,
+  }
+}
+
+/** 保证预览用户存在，并刷新其汇总地点 */
+export function withPreviewUser(workspace: Workspace): Workspace {
+  const travelers = listTravelers(workspace.users)
+  const ensuredTravelers =
+    travelers.length > 0 ? travelers : [createUser('旅客 1', 0)]
+  const destinations = aggregateTravelerDestinations(ensuredTravelers)
+  const preview = createPreviewUser(destinations)
+  const users = [preview, ...ensuredTravelers]
+  const activeUserId =
+    typeof workspace.activeUserId === 'string' && users.some((u) => u.id === workspace.activeUserId)
+      ? workspace.activeUserId
+      : ensuredTravelers[0].id
+  return { version: 2, activeUserId, users }
+}
+
 function sanitizeUser(raw: Partial<TripUser>, index: number): TripUser | null {
   if (!raw || typeof raw.id !== 'string' || typeof raw.name !== 'string') return null
   const destinations = Array.isArray(raw.destinations) ? raw.destinations.filter(isDestination) : []
@@ -41,13 +101,20 @@ function sanitizeUser(raw: Partial<TripUser>, index: number): TripUser | null {
     typeof raw.activeGuideId === 'string' && destinations.some((d) => d.id === raw.activeGuideId)
       ? raw.activeGuideId
       : destinations[0]?.id ?? null
+  const role = raw.role === 'preview' || raw.id === PREVIEW_USER_ID ? 'preview' : 'traveler'
   return {
-    id: raw.id,
-    name: raw.name.trim() || `旅客 ${index + 1}`,
-    color: typeof raw.color === 'string' ? raw.color : USER_COLORS[index % USER_COLORS.length],
+    id: role === 'preview' ? PREVIEW_USER_ID : raw.id,
+    name: role === 'preview' ? '预览' : raw.name.trim() || `旅客 ${index + 1}`,
+    color:
+      role === 'preview'
+        ? PREVIEW_COLOR
+        : typeof raw.color === 'string'
+          ? raw.color
+          : USER_COLORS[index % USER_COLORS.length],
     savedAt: typeof raw.savedAt === 'string' ? raw.savedAt : new Date().toISOString(),
-    destinations,
-    activeGuideId,
+    destinations: role === 'preview' ? [] : destinations,
+    activeGuideId: role === 'preview' ? null : activeGuideId,
+    role,
   }
 }
 
@@ -59,12 +126,16 @@ function createUser(name: string, index: number): TripUser {
     savedAt: new Date().toISOString(),
     destinations: [],
     activeGuideId: null,
+    role: 'traveler',
   }
 }
 
 function defaultWorkspace(): Workspace {
-  const user = createUser('旅客 1', 0)
-  return { version: 2, activeUserId: user.id, users: [user] }
+  return withPreviewUser({
+    version: 2,
+    activeUserId: '',
+    users: [createUser('旅客 1', 0)],
+  })
 }
 
 function migrateLegacyDraft(): Workspace | null {
@@ -88,7 +159,7 @@ function migrateLegacyDraft(): Workspace | null {
         : destinations[0]?.id ?? null
     user.savedAt = typeof data.savedAt === 'string' ? data.savedAt : user.savedAt
     localStorage.removeItem(LEGACY_DRAFT_KEY)
-    return { version: 2, activeUserId: user.id, users: [user] }
+    return withPreviewUser({ version: 2, activeUserId: user.id, users: [user] })
   } catch {
     return null
   }
@@ -104,11 +175,11 @@ export function loadWorkspace(): Workspace {
           .map((u, i) => sanitizeUser(u, i))
           .filter((u): u is TripUser => Boolean(u))
         if (users.length > 0) {
-          const activeUserId =
-            typeof data.activeUserId === 'string' && users.some((u) => u.id === data.activeUserId)
-              ? data.activeUserId
-              : users[0].id
-          return { version: 2, activeUserId, users }
+          return withPreviewUser({
+            version: 2,
+            activeUserId: typeof data.activeUserId === 'string' ? data.activeUserId : users[0].id,
+            users,
+          })
         }
       }
     }
@@ -119,11 +190,12 @@ export function loadWorkspace(): Workspace {
 }
 
 export function saveWorkspace(workspace: Workspace) {
-  localStorage.setItem(TRIP_STORAGE_KEY, JSON.stringify(workspace))
+  localStorage.setItem(TRIP_STORAGE_KEY, JSON.stringify(withPreviewUser(workspace)))
 }
 
 export function getActiveUser(workspace: Workspace): TripUser {
-  return workspace.users.find((u) => u.id === workspace.activeUserId) ?? workspace.users[0]
+  const normalized = withPreviewUser(workspace)
+  return normalized.users.find((u) => u.id === normalized.activeUserId) ?? normalized.users[0]
 }
 
 export function upsertActiveTrip(
@@ -131,58 +203,76 @@ export function upsertActiveTrip(
   destinations: Destination[],
   activeGuideId: string | null,
 ): Workspace {
+  const current = withPreviewUser(workspace)
+  const active = getActiveUser(current)
+  if (isPreviewUser(active)) {
+    // 预览只读：不写回地点，仅刷新汇总
+    const next = withPreviewUser(current)
+    saveWorkspace(next)
+    return next
+  }
   const savedAt = new Date().toISOString()
-  const users = workspace.users.map((u) =>
-    u.id === workspace.activeUserId
-      ? { ...u, destinations, activeGuideId, savedAt }
-      : u,
+  const users = current.users.map((u) =>
+    u.id === current.activeUserId ? { ...u, destinations, activeGuideId, savedAt } : u,
   )
-  const next = { ...workspace, users }
+  const next = withPreviewUser({ ...current, users })
   saveWorkspace(next)
   return next
 }
 
 export function switchUser(workspace: Workspace, userId: string): Workspace {
-  if (!workspace.users.some((u) => u.id === userId)) return workspace
-  const next = { ...workspace, activeUserId: userId }
+  const current = withPreviewUser(workspace)
+  if (!current.users.some((u) => u.id === userId)) return current
+  const next = withPreviewUser({ ...current, activeUserId: userId })
   saveWorkspace(next)
   return next
 }
 
 export function addUser(workspace: Workspace, name: string): Workspace {
-  const user = createUser(name, workspace.users.length)
-  const next = {
-    ...workspace,
+  const current = withPreviewUser(workspace)
+  const travelers = listTravelers(current.users)
+  const user = createUser(name, travelers.length)
+  const next = withPreviewUser({
+    ...current,
     activeUserId: user.id,
-    users: [...workspace.users, user],
-  }
+    users: [...current.users, user],
+  })
   saveWorkspace(next)
   return next
 }
 
 export function renameUser(workspace: Workspace, userId: string, name: string): Workspace {
+  const current = withPreviewUser(workspace)
+  if (userId === PREVIEW_USER_ID) return current
   const trimmed = name.trim()
-  if (!trimmed) return workspace
-  const next = {
-    ...workspace,
-    users: workspace.users.map((u) => (u.id === userId ? { ...u, name: trimmed } : u)),
-  }
+  if (!trimmed) return current
+  const next = withPreviewUser({
+    ...current,
+    users: current.users.map((u) => (u.id === userId ? { ...u, name: trimmed } : u)),
+  })
   saveWorkspace(next)
   return next
 }
 
 export function removeUser(workspace: Workspace, userId: string): Workspace {
-  if (workspace.users.length <= 1) return workspace
-  const users = workspace.users.filter((u) => u.id !== userId)
+  const current = withPreviewUser(workspace)
+  if (userId === PREVIEW_USER_ID) return current
+  const travelers = listTravelers(current.users)
+  if (travelers.length <= 1) return current
+  const users = current.users.filter((u) => u.id !== userId)
   const activeUserId =
-    workspace.activeUserId === userId ? users[0].id : workspace.activeUserId
-  const next = { version: 2 as const, activeUserId, users }
+    current.activeUserId === userId
+      ? listTravelers(users)[0]?.id ?? PREVIEW_USER_ID
+      : current.activeUserId
+  const next = withPreviewUser({ version: 2, activeUserId, users })
   saveWorkspace(next)
   return next
 }
 
 export function clearActiveTrip(workspace: Workspace): Workspace {
-  return upsertActiveTrip(workspace, [], null)
+  const current = withPreviewUser(workspace)
+  if (isPreviewUser(getActiveUser(current))) return current
+  return upsertActiveTrip(current, [], null)
 }
 
 export function formatSavedAt(iso: string | null): string | null {

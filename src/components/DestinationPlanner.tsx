@@ -9,6 +9,10 @@ type Props = {
   onAddMany: (places: Destination[]) => void
   onRemove: (id: string) => void
   onReorder: (from: number, to: number) => void
+  /** 预览模式：只读展示汇总地点 */
+  readOnly?: boolean
+  /** 预览下允许上下调整顺序（不可增删） */
+  allowArrange?: boolean
 }
 
 export function DestinationPlanner({
@@ -17,6 +21,8 @@ export function DestinationPlanner({
   onAddMany,
   onRemove,
   onReorder,
+  readOnly = false,
+  allowArrange = false,
 }: Props) {
   const inputId = useId()
   const pasteId = useId()
@@ -137,101 +143,115 @@ export function DestinationPlanner({
   const matchedCount = resolved.filter((r) => r.place).length
 
   return (
-    <div className="planner">
+    <div className={`planner${readOnly ? ' read-only' : ''}`}>
       <div className="section-head">
-        <h2>添加目的地</h2>
-        <p>粘贴行程文字自动识别地点，也可单独搜索添加；系统会按顺序规划驾车路线。</p>
+        <h2>{readOnly ? '全部地点预览' : '添加目的地'}</h2>
+        <p>
+          {readOnly
+            ? allowArrange
+              ? '汇总所有旅客地点。可用「优化路线」或上下箭头重排顺序（不改写各旅客原行程）。'
+              : '汇总所有旅客已选地点（按坐标去重）。预览模式不可编辑，请切换到具体旅客后再修改。'
+            : '粘贴行程文字自动识别地点，也可单独搜索添加；系统会按顺序规划驾车路线。'}
+        </p>
       </div>
 
-      <div className="paste-panel">
-        <label htmlFor={pasteId}>粘贴行程 / 攻略片段</label>
-        <textarea
-          id={pasteId}
-          value={pasteText}
-          onChange={(e) => setPasteText(e.target.value)}
-          rows={5}
-          placeholder={'例如：\n第一天杭州西湖、雷峰塔，晚上河坊街。\n第二天去灵隐寺，下午到宋城。\n或直接：西湖 → 灵隐寺 → 西溪湿地'}
-        />
-        <div className="paste-actions">
-          <button type="button" className="btn-parse" onClick={() => void handleParse()} disabled={parsing}>
-            {parsing ? '识别中…' : '识别地点'}
-          </button>
-          {resolved.length > 0 && (
-            <button type="button" className="btn-parse secondary" onClick={handleAddResolved}>
-              添加勾选（{Object.values(selected).filter(Boolean).length}/{matchedCount}）
+      {!readOnly && (
+        <div className="paste-panel">
+          <label htmlFor={pasteId}>粘贴行程 / 攻略片段</label>
+          <textarea
+            id={pasteId}
+            value={pasteText}
+            onChange={(e) => setPasteText(e.target.value)}
+            rows={5}
+            placeholder={
+              '例如：\n第一天杭州西湖、雷峰塔，晚上河坊街。\n第二天去灵隐寺，下午到宋城。\n或直接：西湖 → 灵隐寺 → 西溪湿地'
+            }
+          />
+          <div className="paste-actions">
+            <button type="button" className="btn-parse" onClick={() => void handleParse()} disabled={parsing}>
+              {parsing ? '识别中…' : '识别地点'}
             </button>
+            {resolved.length > 0 && (
+              <button type="button" className="btn-parse secondary" onClick={handleAddResolved}>
+                添加勾选（{Object.values(selected).filter(Boolean).length}/{matchedCount}）
+              </button>
+            )}
+          </div>
+          {parseError && <p className="form-hint error">{parseError}</p>}
+          {resolved.length > 0 && (
+            <ul className="resolved-list">
+              {resolved.map((item, index) => {
+                const key = `${item.query}-${index}`
+                return (
+                  <li key={key} className={item.place ? undefined : 'miss'}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        disabled={!item.place}
+                        checked={Boolean(selected[key])}
+                        onChange={(e) =>
+                          setSelected((prev) => ({ ...prev, [key]: e.target.checked }))
+                        }
+                      />
+                      <span className="resolved-query">{item.query}</span>
+                      {item.place ? (
+                        <span className="resolved-match">
+                          → {item.place.name}
+                          <small>{item.place.displayName}</small>
+                        </span>
+                      ) : (
+                        <span className="resolved-match miss-text">未匹配到地点</span>
+                      )}
+                    </label>
+                  </li>
+                )
+              })}
+            </ul>
           )}
         </div>
-        {parseError && <p className="form-hint error">{parseError}</p>}
-        {resolved.length > 0 && (
-          <ul className="resolved-list">
-            {resolved.map((item, index) => {
-              const key = `${item.query}-${index}`
-              return (
-                <li key={key} className={item.place ? undefined : 'miss'}>
-                  <label>
-                    <input
-                      type="checkbox"
-                      disabled={!item.place}
-                      checked={Boolean(selected[key])}
-                      onChange={(e) =>
-                        setSelected((prev) => ({ ...prev, [key]: e.target.checked }))
-                      }
-                    />
-                    <span className="resolved-query">{item.query}</span>
-                    {item.place ? (
-                      <span className="resolved-match">
-                        → {item.place.name}
-                        <small>{item.place.displayName}</small>
-                      </span>
-                    ) : (
-                      <span className="resolved-match miss-text">未匹配到地点</span>
-                    )}
-                  </label>
-                </li>
-              )
-            })}
-          </ul>
-        )}
-      </div>
+      )}
 
-      <form className="search-form" onSubmit={handleSubmit} ref={wrapRef}>
-        <p className="search-label">或单独搜索添加</p>
-        <label htmlFor={inputId} className="sr-only">
-          搜索目的地
-        </label>
-        <div className="search-field">
-          <input
-            id={inputId}
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onFocus={() => suggestions.length > 0 && setOpen(true)}
-            placeholder="输入城市、景点或地址…"
-            autoComplete="off"
-          />
-          <button type="submit" disabled={!suggestions[0]}>
-            {loading ? '搜索中' : '添加'}
-          </button>
-        </div>
-        {open && suggestions.length > 0 && (
-          <ul className="suggestions" role="listbox">
-            {suggestions.map((s) => (
-              <li key={s.id}>
-                <button type="button" onClick={() => pick(s)}>
-                  <span className="sug-name">{s.name}</span>
-                  <span className="sug-full">{s.displayName}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        {error && <p className="form-hint error">{error}</p>}
-      </form>
+      {!readOnly && (
+        <form className="search-form" onSubmit={handleSubmit} ref={wrapRef}>
+          <p className="search-label">或单独搜索添加</p>
+          <label htmlFor={inputId} className="sr-only">
+            搜索目的地
+          </label>
+          <div className="search-field">
+            <input
+              id={inputId}
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onFocus={() => suggestions.length > 0 && setOpen(true)}
+              placeholder="输入城市、景点或地址…"
+              autoComplete="off"
+            />
+            <button type="submit" disabled={!suggestions[0]}>
+              {loading ? '搜索中' : '添加'}
+            </button>
+          </div>
+          {open && suggestions.length > 0 && (
+            <ul className="suggestions" role="listbox">
+              {suggestions.map((s) => (
+                <li key={s.id}>
+                  <button type="button" onClick={() => pick(s)}>
+                    <span className="sug-name">{s.name}</span>
+                    <span className="sug-full">{s.displayName}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {error && <p className="form-hint error">{error}</p>}
+        </form>
+      )}
 
       <ol className="dest-list">
         {destinations.length === 0 && (
-          <li className="dest-empty">还没有目的地，粘贴一段行程或搜索添加第一站吧。</li>
+          <li className="dest-empty">
+            {readOnly ? '各旅客尚未添加地点。' : '还没有目的地，粘贴一段行程或搜索添加第一站吧。'}
+          </li>
         )}
         {destinations.map((d, index) => (
           <li key={d.id} className="dest-item">
@@ -239,28 +259,37 @@ export function DestinationPlanner({
             <div className="dest-body">
               <strong>{d.name}</strong>
               <span>{d.displayName}</span>
+              {readOnly && d.ownerName && (
+                <span className="dest-owner" style={{ color: d.ownerColor || undefined }}>
+                  来自 {d.ownerName}
+                </span>
+              )}
             </div>
-            <div className="dest-actions">
-              <button
-                type="button"
-                aria-label="上移"
-                disabled={index === 0}
-                onClick={() => onReorder(index, index - 1)}
-              >
-                ↑
-              </button>
-              <button
-                type="button"
-                aria-label="下移"
-                disabled={index === destinations.length - 1}
-                onClick={() => onReorder(index, index + 1)}
-              >
-                ↓
-              </button>
-              <button type="button" className="danger" onClick={() => onRemove(d.id)}>
-                移除
-              </button>
-            </div>
+            {(!readOnly || allowArrange) && (
+              <div className="dest-actions">
+                <button
+                  type="button"
+                  aria-label="上移"
+                  disabled={index === 0}
+                  onClick={() => onReorder(index, index - 1)}
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  aria-label="下移"
+                  disabled={index === destinations.length - 1}
+                  onClick={() => onReorder(index, index + 1)}
+                >
+                  ↓
+                </button>
+                {!readOnly && (
+                  <button type="button" className="danger" onClick={() => onRemove(d.id)}>
+                    移除
+                  </button>
+                )}
+              </div>
+            )}
           </li>
         ))}
       </ol>

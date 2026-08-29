@@ -13,14 +13,21 @@ type Props = {
   destinations: Destination[]
   activeId: string | null
   onSelectDestination: (id: string) => void
+  onAddWaypoint: (place: GuidePlace) => void
 }
 
-export function NearbyGuides({ destinations, activeId, onSelectDestination }: Props) {
+export function NearbyGuides({
+  destinations,
+  activeId,
+  onSelectDestination,
+  onAddWaypoint,
+}: Props) {
   const [category, setCategory] = useState<GuideCategory>('eat')
   const [places, setPlaces] = useState<GuidePlace[]>([])
   const [brief, setBrief] = useState<PlaceBrief | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
 
   const active = destinations.find((d) => d.id === activeId) ?? destinations[0]
 
@@ -56,6 +63,12 @@ export function NearbyGuides({ destinations, activeId, onSelectDestination }: Pr
     }
   }, [active, category])
 
+  const handleAdd = (place: GuidePlace) => {
+    onAddWaypoint(place)
+    setToast(`已将「${place.name}」加入途径点`)
+    window.setTimeout(() => setToast(null), 2200)
+  }
+
   if (destinations.length === 0) {
     return (
       <section className="guides" id="guides">
@@ -72,7 +85,7 @@ export function NearbyGuides({ destinations, activeId, onSelectDestination }: Pr
     <section className="guides" id="guides">
       <div className="section-head">
         <h2>周边吃喝住行</h2>
-        <p>基于高德地图实时检索周边餐饮、饮品、住宿与出行点。</p>
+        <p>检索周边地点后，可一键加为行程途径点，再回「路线地图」做优化。</p>
       </div>
 
       <div className="dest-chips">
@@ -116,25 +129,45 @@ export function NearbyGuides({ destinations, activeId, onSelectDestination }: Pr
 
       {loading && <p className="form-hint">正在联网搜索「{active?.name}」周边…</p>}
       {error && !loading && <p className="form-hint error">{error}</p>}
+      {toast && (
+        <p className="form-hint export-hint" role="status">
+          {toast}
+        </p>
+      )}
 
       <ul className="guide-list">
-        {places.map((p) => (
-          <li key={p.id}>
-            <div>
-              <strong>{p.name}</strong>
-              {p.address && <span className="meta">{p.address}</span>}
-              {p.tel && <span className="meta">电话 {p.tel}</span>}
-              {p.tags.length > 0 && <span className="meta tags">{p.tags.join(' · ')}</span>}
-            </div>
-            {p.distanceM != null && (
-              <span className="distance">
-                {p.distanceM < 1000
-                  ? `${Math.round(p.distanceM)} m`
-                  : `${(p.distanceM / 1000).toFixed(1)} km`}
-              </span>
-            )}
-          </li>
-        ))}
+        {places.map((p) => {
+          const already = destinations.some(
+            (d) => Math.abs(d.lat - p.lat) < 1e-5 && Math.abs(d.lon - p.lon) < 1e-5,
+          )
+          return (
+            <li key={p.id}>
+              <div>
+                <strong>{p.name}</strong>
+                {p.address && <span className="meta">{p.address}</span>}
+                {p.tel && <span className="meta">电话 {p.tel}</span>}
+                {p.tags.length > 0 && <span className="meta tags">{p.tags.join(' · ')}</span>}
+              </div>
+              <div className="guide-actions">
+                {p.distanceM != null && (
+                  <span className="distance">
+                    {p.distanceM < 1000
+                      ? `${Math.round(p.distanceM)} m`
+                      : `${(p.distanceM / 1000).toFixed(1)} km`}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="guide-add-btn"
+                  disabled={already}
+                  onClick={() => handleAdd(p)}
+                >
+                  {already ? '已在行程' : '加为途径点'}
+                </button>
+              </div>
+            </li>
+          )
+        })}
       </ul>
     </section>
   )

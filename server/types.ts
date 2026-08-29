@@ -6,7 +6,12 @@ export type Destination = {
   lon: number
   city?: string
   address?: string
+  ownerName?: string
+  ownerColor?: string
 }
+
+export const PREVIEW_USER_ID = 'preview-all'
+export const PREVIEW_COLOR = '#4a5d78'
 
 export type TripUser = {
   id: string
@@ -15,6 +20,7 @@ export type TripUser = {
   savedAt: string
   destinations: Destination[]
   activeGuideId: string | null
+  role?: 'traveler' | 'preview'
 }
 
 export type Workspace = {
