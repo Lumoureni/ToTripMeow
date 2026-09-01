@@ -6,6 +6,7 @@ import {
   apiGetWorkspace,
   apiHealth,
   apiLinkCompanion,
+  apiPutActiveCarryItems,
   apiPutActiveTrip,
   apiPutWorkspace,
   apiRemoveUser,
@@ -14,6 +15,7 @@ import {
 } from './api/workspaceApi'
 import { apiLogout, apiMe } from './api/authApi'
 import { AdminPage } from './components/AdminPage'
+import { CarryItemsPanel } from './components/CarryItemsPanel'
 import { DestinationPlanner } from './components/DestinationPlanner'
 import { ExportPanel } from './components/ExportPanel'
 import { Hero } from './components/Hero'
@@ -24,6 +26,7 @@ import { RouteOptimizePanel } from './components/RouteOptimizePanel'
 import { UserWorkspace } from './components/UserWorkspace'
 import {
   addUser,
+  aggregateSharedCarryItems,
   aggregateTravelerDestinations,
   clearActiveTrip,
   formatSavedAt,
@@ -39,10 +42,12 @@ import {
   setStorageAccountId,
   switchUser,
   upsertActiveTrip,
+  upsertActiveCarryItems,
   withPreviewUser,
   getSelfTraveler,
   isLinkedCompanion,
   type Workspace,
+  type CarryItem,
 } from './utils/tripStorage'
 import {
   clearAuthSession,
@@ -78,6 +83,7 @@ export default function App() {
   workspaceRef.current = workspace
 
   const [destinations, setDestinations] = useState<Destination[]>(bootUser.destinations)
+  const [carryItems, setCarryItems] = useState<CarryItem[]>(bootUser.carryItems ?? [])
   const [activeGuideId, setActiveGuideId] = useState<string | null>(bootUser.activeGuideId)
   const [savedAt, setSavedAt] = useState<string | null>(bootUser.savedAt)
   const [route, setRoute] = useState<RouteInfo | null>(null)
@@ -109,6 +115,7 @@ export default function App() {
     saveWorkspace(normalized)
     setWorkspace(normalized)
     setDestinations(user.destinations)
+    setCarryItems(user.carryItems ?? [])
     setActiveGuideId(user.activeGuideId)
     setSavedAt(user.savedAt)
     setRoute(null)
@@ -206,6 +213,42 @@ export default function App() {
     return () => window.clearTimeout(timer)
   }, [destinations, activeGuideId, hydrated, backendOnline, previewMode, linkedMode])
 
+  useEffect(() => {
+    if (!hydrated) return
+    if (skipNextSave.current) return
+    if (previewMode || linkedMode) return
+
+    const local = upsertActiveCarryItems(workspaceRef.current, carryItems)
+    workspaceRef.current = local
+    setWorkspace(withPreviewUser(local))
+    setSavedAt(getActiveUser(local).savedAt)
+
+    if (!backendOnline) return
+
+    const epochAtStart = workspaceEpoch.current
+    const activeIdAtStart = workspaceRef.current.activeUserId
+    const timer = window.setTimeout(() => {
+      void apiPutActiveCarryItems(carryItems)
+        .then((remote) => {
+          if (epochAtStart !== workspaceEpoch.current) return
+          if (workspaceRef.current.activeUserId !== activeIdAtStart) return
+          const normalized = withPreviewUser({
+            ...remote,
+            activeUserId: activeIdAtStart,
+          })
+          workspaceRef.current = normalized
+          setWorkspace(normalized)
+          setSavedAt(getActiveUser(normalized).savedAt)
+        })
+        .catch(() => {
+          if (epochAtStart !== workspaceEpoch.current) return
+          setBackendOnline(false)
+        })
+    }, 450)
+
+    return () => window.clearTimeout(timer)
+  }, [carryItems, hydrated, backendOnline, previewMode, linkedMode])
+
   // 预览模式：进入时用汇总填充；优化/重排后锁定，离开预览时解锁
   useEffect(() => {
     if (!previewMode) {
@@ -220,13 +263,23 @@ export default function App() {
     )
   }, [previewMode, workspace.users])
 
+  useEffect(() => {
+    if (!previewMode) return
+    setCarryItems(aggregateSharedCarryItems(workspace.users))
+  }, [previewMode, workspace.users])
+
   const runWorkspaceAction = async (action: () => Promise<Workspace>) => {
     // flush current trip locally first
-    const flushed = upsertActiveTrip(workspaceRef.current, destinations, activeGuideId)
+    const flushed = upsertActiveTrip(
+      upsertActiveCarryItems(workspaceRef.current, carryItems),
+      destinations,
+      activeGuideId,
+    )
     workspaceRef.current = flushed
     try {
       if (backendOnline) {
         await apiPutActiveTrip(destinations, activeGuideId)
+        await apiPutActiveCarryItems(carryItems)
       }
       const next = await action()
       applyUserTrip(next, { skipSave: true })
@@ -242,7 +295,11 @@ export default function App() {
 
   const handleSwitchUser = (userId: string) => {
     // 先本地切换，保证顶栏/侧栏立刻更新
-    const flushed = upsertActiveTrip(workspaceRef.current, destinations, activeGuideId)
+    const flushed = upsertActiveTrip(
+      upsertActiveCarryItems(workspaceRef.current, carryItems),
+      destinations,
+      activeGuideId,
+    )
     const localNext = switchUser(flushed, userId)
     applyUserTrip(localNext, { skipSave: true })
     const epoch = workspaceEpoch.current
@@ -274,7 +331,11 @@ export default function App() {
           return addUser(workspaceRef.current, name)
         })
       } catch {
-        const flushed = upsertActiveTrip(workspaceRef.current, destinations, activeGuideId)
+        const flushed = upsertActiveTrip(
+          upsertActiveCarryItems(workspaceRef.current, carryItems),
+          destinations,
+          activeGuideId,
+        )
         applyUserTrip(addUser(flushed, name), { skipSave: true })
       }
     })()
@@ -284,10 +345,15 @@ export default function App() {
     if (!backendOnline) {
       throw new Error('需要连接后端才能同步同行行程')
     }
-    const flushed = upsertActiveTrip(workspaceRef.current, destinations, activeGuideId)
+    const flushed = upsertActiveTrip(
+      upsertActiveCarryItems(workspaceRef.current, carryItems),
+      destinations,
+      activeGuideId,
+    )
     workspaceRef.current = flushed
     try {
       await apiPutActiveTrip(destinations, activeGuideId)
+      await apiPutActiveCarryItems(carryItems)
       const next = await apiLinkCompanion(username, password)
       applyUserTrip(next, { skipSave: true })
       setBackendOnline(true)
@@ -325,7 +391,11 @@ export default function App() {
           return removeUser(workspaceRef.current, userId)
         })
       } catch {
-        const flushed = upsertActiveTrip(workspaceRef.current, destinations, activeGuideId)
+        const flushed = upsertActiveTrip(
+          upsertActiveCarryItems(workspaceRef.current, carryItems),
+          destinations,
+          activeGuideId,
+        )
         applyUserTrip(removeUser(flushed, userId), { skipSave: true })
       }
     })()
@@ -629,6 +699,20 @@ export default function App() {
       emphasized: layer.emphasized,
     }))
 
+  const othersSharedCarryItems = !previewMode && !linkedMode
+    ? listTravelers(workspace.users)
+        .filter((u) => u.id !== activeUser.id)
+        .flatMap((u) =>
+          (u.carryItems ?? [])
+            .filter((item) => item.shared)
+            .map((item) => ({
+              ...item,
+              ownerName: u.name,
+              ownerColor: u.color,
+            })),
+        )
+    : []
+
   const savedLabel = formatSavedAt(savedAt)
 
   const enterPlan = () => {
@@ -775,6 +859,14 @@ export default function App() {
             companionPick={linkedMode}
             companionName={activeUser.name}
             onAddCompanionWaypoints={addCompanionWaypointsToSelf}
+          />
+          <CarryItemsPanel
+            carryItems={carryItems}
+            onChange={setCarryItems}
+            readOnly={previewMode}
+            linkedMode={linkedMode}
+            companionName={activeUser.name}
+            othersShared={othersSharedCarryItems}
           />
         </aside>
 

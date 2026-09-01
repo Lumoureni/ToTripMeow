@@ -1,5 +1,5 @@
 import type { Destination } from '../types'
-import type { Workspace } from '../utils/tripStorage'
+import type { CarryItem, Workspace } from '../utils/tripStorage'
 import { saveWorkspace } from '../utils/tripStorage'
 import { clearAuthSession, getAuthToken } from '../utils/authStorage'
 
@@ -114,6 +114,15 @@ export async function apiPutActiveTrip(
     await request<Workspace>('/api/workspace/active-trip', {
       method: 'PUT',
       body: JSON.stringify({ destinations, activeGuideId }),
+    }),
+  )
+}
+
+export async function apiPutActiveCarryItems(carryItems: CarryItem[]): Promise<Workspace> {
+  return cache(
+    await request<Workspace>('/api/workspace/active-carry-items', {
+      method: 'PUT',
+      body: JSON.stringify({ carryItems }),
     }),
   )
 }

@@ -17,6 +17,17 @@ function storageKey() {
 export const PREVIEW_USER_ID = 'preview-all'
 export const PREVIEW_COLOR = '#4a5d78'
 
+export type CarryItem = {
+  id: string
+  name: string
+  quantity?: number
+  note?: string
+  /** 是否对同行旅客可见 */
+  shared?: boolean
+  ownerName?: string
+  ownerColor?: string
+}
+
 export type TripUser = {
   id: string
   name: string
@@ -24,6 +35,7 @@ export type TripUser = {
   savedAt: string
   destinations: Destination[]
   activeGuideId: string | null
+  carryItems?: CarryItem[]
   /** 预览用户：只读汇总所有旅客地点 */
   role?: 'traveler' | 'preview'
   /** 已通过账号密码同步的同行账号 id */
@@ -72,6 +84,41 @@ export function getSelfTraveler(workspace: Workspace): TripUser | null {
   return listTravelers(workspace.users).find((u) => !isLinkedCompanion(u)) ?? null
 }
 
+function isCarryItem(value: unknown): value is CarryItem {
+  if (!value || typeof value !== 'object') return false
+  const item = value as CarryItem
+  return typeof item.id === 'string' && typeof item.name === 'string' && item.name.trim().length > 0
+}
+
+function sanitizeCarryItems(raw: unknown): CarryItem[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter(isCarryItem)
+    .map((item) => ({
+      id: item.id,
+      name: item.name.trim(),
+      ...(typeof item.quantity === 'number' && item.quantity > 0 ? { quantity: Math.floor(item.quantity) } : {}),
+      ...(typeof item.note === 'string' && item.note.trim() ? { note: item.note.trim() } : {}),
+      ...(item.shared ? { shared: true } : {}),
+    }))
+}
+
+/** 汇总所有旅客标记为共享的携带物品 */
+export function aggregateSharedCarryItems(users: TripUser[]): CarryItem[] {
+  const out: CarryItem[] = []
+  for (const user of listTravelers(users)) {
+    for (const item of user.carryItems ?? []) {
+      if (!item.shared) continue
+      out.push({
+        ...item,
+        ownerName: user.name,
+        ownerColor: user.color,
+      })
+    }
+  }
+  return out
+}
+
 /** 合并所有旅客地点（按坐标去重，保留首次出现顺序，并标注来源） */
 export function aggregateTravelerDestinations(users: TripUser[]): Destination[] {
   const seen = new Set<string>()
@@ -91,7 +138,7 @@ export function aggregateTravelerDestinations(users: TripUser[]): Destination[] 
   return out
 }
 
-function createPreviewUser(destinations: Destination[]): TripUser {
+function createPreviewUser(destinations: Destination[], carryItems: CarryItem[]): TripUser {
   return {
     id: PREVIEW_USER_ID,
     name: '预览',
@@ -100,6 +147,7 @@ function createPreviewUser(destinations: Destination[]): TripUser {
     savedAt: new Date().toISOString(),
     destinations,
     activeGuideId: destinations[0]?.id ?? null,
+    carryItems,
   }
 }
 
@@ -117,7 +165,8 @@ export function withPreviewUser(workspace: Workspace): Workspace {
     return { version: 2, activeUserId, users: ensuredTravelers }
   }
   const destinations = aggregateTravelerDestinations(ensuredTravelers)
-  const preview = createPreviewUser(destinations)
+  const carryItems = aggregateSharedCarryItems(ensuredTravelers)
+  const preview = createPreviewUser(destinations, carryItems)
   const users = [preview, ...ensuredTravelers]
   const activeUserId =
     typeof workspace.activeUserId === 'string' && users.some((u) => u.id === workspace.activeUserId)
@@ -146,6 +195,7 @@ function sanitizeUser(raw: Partial<TripUser>, index: number): TripUser | null {
     savedAt: typeof raw.savedAt === 'string' ? raw.savedAt : new Date().toISOString(),
     destinations: role === 'preview' ? [] : destinations,
     activeGuideId: role === 'preview' ? null : activeGuideId,
+    carryItems: role === 'preview' ? [] : sanitizeCarryItems(raw.carryItems),
     role,
     ...(role !== 'preview' && typeof raw.linkedAccountId === 'string'
       ? { linkedAccountId: raw.linkedAccountId }
@@ -161,6 +211,7 @@ function createUser(name: string, index: number): TripUser {
     savedAt: new Date().toISOString(),
     destinations: [],
     activeGuideId: null,
+    carryItems: [],
     role: 'traveler',
   }
 }
@@ -253,6 +304,24 @@ export function upsertActiveTrip(
   const savedAt = new Date().toISOString()
   const users = current.users.map((u) =>
     u.id === current.activeUserId ? { ...u, destinations, activeGuideId, savedAt } : u,
+  )
+  const next = withPreviewUser({ ...current, users })
+  saveWorkspace(next)
+  return next
+}
+
+export function upsertActiveCarryItems(workspace: Workspace, carryItems: CarryItem[]): Workspace {
+  const current = withPreviewUser(workspace)
+  const active = getActiveUser(current)
+  if (isPreviewUser(active)) {
+    const next = withPreviewUser(current)
+    saveWorkspace(next)
+    return next
+  }
+  const savedAt = new Date().toISOString()
+  const sanitized = sanitizeCarryItems(carryItems)
+  const users = current.users.map((u) =>
+    u.id === current.activeUserId ? { ...u, carryItems: sanitized, savedAt } : u,
   )
   const next = withPreviewUser({ ...current, users })
   saveWorkspace(next)
