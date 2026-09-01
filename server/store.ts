@@ -6,7 +6,7 @@ import {
   findAccountByUsername,
   verifyPassword,
 } from './authStore.js'
-import type { Destination, TripUser, Workspace } from './types.js'
+import type { CarryItem, Destination, TripUser, Workspace } from './types.js'
 import { PREVIEW_COLOR, PREVIEW_USER_ID, USER_COLORS } from './types.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -39,6 +39,40 @@ function listTravelers(users: TripUser[]): TripUser[] {
   return users.filter((u) => !isPreviewUser(u))
 }
 
+function isCarryItem(value: unknown): value is CarryItem {
+  if (!value || typeof value !== 'object') return false
+  const item = value as CarryItem
+  return typeof item.id === 'string' && typeof item.name === 'string' && item.name.trim().length > 0
+}
+
+function sanitizeCarryItems(raw: unknown): CarryItem[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter(isCarryItem)
+    .map((item) => ({
+      id: item.id,
+      name: item.name.trim(),
+      ...(typeof item.quantity === 'number' && item.quantity > 0 ? { quantity: Math.floor(item.quantity) } : {}),
+      ...(typeof item.note === 'string' && item.note.trim() ? { note: item.note.trim() } : {}),
+      ...(item.shared ? { shared: true } : {}),
+    }))
+}
+
+export function aggregateSharedCarryItems(users: TripUser[]): CarryItem[] {
+  const out: CarryItem[] = []
+  for (const user of listTravelers(users)) {
+    for (const item of user.carryItems ?? []) {
+      if (!item.shared) continue
+      out.push({
+        ...item,
+        ownerName: user.name,
+        ownerColor: user.color,
+      })
+    }
+  }
+  return out
+}
+
 function aggregateTravelerDestinations(users: TripUser[]): Destination[] {
   const seen = new Set<string>()
   const out: Destination[] = []
@@ -57,7 +91,7 @@ function aggregateTravelerDestinations(users: TripUser[]): Destination[] {
   return out
 }
 
-function createPreviewUser(destinations: Destination[]): TripUser {
+function createPreviewUser(destinations: Destination[], carryItems: CarryItem[]): TripUser {
   return {
     id: PREVIEW_USER_ID,
     name: '预览',
@@ -66,6 +100,7 @@ function createPreviewUser(destinations: Destination[]): TripUser {
     savedAt: new Date().toISOString(),
     destinations,
     activeGuideId: destinations[0]?.id ?? null,
+    carryItems,
   }
 }
 
@@ -77,6 +112,7 @@ function createUser(name: string, index: number): TripUser {
     savedAt: new Date().toISOString(),
     destinations: [],
     activeGuideId: null,
+    carryItems: [],
     role: 'traveler',
   }
 }
@@ -94,7 +130,8 @@ function withPreviewUser(workspace: Workspace): Workspace {
     return { version: 2, activeUserId, users: ensuredTravelers }
   }
   const destinations = aggregateTravelerDestinations(ensuredTravelers)
-  const preview = createPreviewUser(destinations)
+  const carryItems = aggregateSharedCarryItems(ensuredTravelers)
+  const preview = createPreviewUser(destinations, carryItems)
   const users = [preview, ...ensuredTravelers]
   const activeUserId =
     typeof workspace.activeUserId === 'string' && users.some((u) => u.id === workspace.activeUserId)
@@ -123,6 +160,7 @@ function sanitizeUser(raw: Partial<TripUser>, index: number): TripUser | null {
     savedAt: typeof raw.savedAt === 'string' ? raw.savedAt : new Date().toISOString(),
     destinations: role === 'preview' ? [] : destinations,
     activeGuideId: role === 'preview' ? null : activeGuideId,
+    carryItems: role === 'preview' ? [] : sanitizeCarryItems(raw.carryItems),
     role,
     ...(role !== 'preview' && typeof raw.linkedAccountId === 'string'
       ? { linkedAccountId: raw.linkedAccountId }
@@ -225,6 +263,20 @@ export function upsertActiveTrip(
   return writeWorkspace(accountId, { ...current, users })
 }
 
+export function upsertActiveCarryItems(accountId: string, carryItems: CarryItem[]): Workspace {
+  const current = withPreviewUser(readWorkspace(accountId))
+  const active = getActiveUser(current)
+  if (isPreviewUser(active)) {
+    return writeWorkspace(accountId, current)
+  }
+  const savedAt = new Date().toISOString()
+  const sanitized = sanitizeCarryItems(carryItems)
+  const users = current.users.map((u) =>
+    u.id === current.activeUserId ? { ...u, carryItems: sanitized, savedAt } : u,
+  )
+  return writeWorkspace(accountId, { ...current, users })
+}
+
 export function switchUser(accountId: string, userId: string): Workspace {
   const current = withPreviewUser(readWorkspace(accountId))
   if (!current.users.some((u) => u.id === userId)) return current
@@ -281,6 +333,17 @@ function cloneDestinations(destinations: Destination[]): Destination[] {
   }))
 }
 
+function cloneCarryItems(items: CarryItem[]): CarryItem[] {
+  return sanitizeCarryItems(
+    items.map((item) => ({
+      ...item,
+      id: randomUUID(),
+      ownerName: undefined,
+      ownerColor: undefined,
+    })),
+  )
+}
+
 /** 校验同行账号密码，将其本人行程拷贝为当前工作区的一名旅客 */
 export function addLinkedCompanion(
   hostAccountId: string,
@@ -302,6 +365,7 @@ export function addLinkedCompanion(
     peerTravelers[0] ??
     null
   const destinations = source ? cloneDestinations(source.destinations) : []
+  const carryItems = source ? cloneCarryItems(source.carryItems ?? []) : []
   const activeGuideId = destinations[0]?.id ?? null
   const savedAt = new Date().toISOString()
 
@@ -316,6 +380,7 @@ export function addLinkedCompanion(
             ...u,
             name: peer.displayName,
             destinations,
+            carryItems,
             activeGuideId,
             savedAt,
             linkedAccountId: peer.id,
@@ -335,6 +400,7 @@ export function addLinkedCompanion(
     color: USER_COLORS[travelers.length % USER_COLORS.length],
     savedAt,
     destinations,
+    carryItems,
     activeGuideId,
     role: 'traveler',
     linkedAccountId: peer.id,

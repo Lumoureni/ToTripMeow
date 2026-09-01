@@ -13,6 +13,17 @@ export type Destination = {
 export const PREVIEW_USER_ID = 'preview-all'
 export const PREVIEW_COLOR = '#4a5d78'
 
+export type CarryItem = {
+  id: string
+  name: string
+  quantity?: number
+  note?: string
+  /** 是否对同行旅客可见 */
+  shared?: boolean
+  ownerName?: string
+  ownerColor?: string
+}
+
 export type TripUser = {
   id: string
   name: string
@@ -20,6 +31,7 @@ export type TripUser = {
   savedAt: string
   destinations: Destination[]
   activeGuideId: string | null
+  carryItems?: CarryItem[]
   role?: 'traveler' | 'preview'
   /** 已通过账号密码同步的同行账号 id */
   linkedAccountId?: string

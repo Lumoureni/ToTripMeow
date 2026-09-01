@@ -35,6 +35,7 @@ import {
   renameUser,
   switchUser,
   upsertActiveTrip,
+  upsertActiveCarryItems,
   writeWorkspace,
 } from './store.js'
 
@@ -365,6 +366,22 @@ app.put('/api/workspace/active-trip', requireAuth, async (req: AuthedRequest, re
     res.json(workspace)
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : '保存行程失败' })
+  }
+})
+
+app.put('/api/workspace/active-carry-items', requireAuth, async (req: AuthedRequest, res) => {
+  if (req.role === 'admin') {
+    res.status(403).json({ error: '管理员无行程工作区' })
+    return
+  }
+  try {
+    const carryItems = Array.isArray(req.body?.carryItems) ? req.body.carryItems : []
+    const workspace = await withFileLock(workspaceLockKey(req.accountId!), () =>
+      upsertActiveCarryItems(req.accountId!, carryItems),
+    )
+    res.json(workspace)
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : '保存携带物品失败' })
   }
 })
 

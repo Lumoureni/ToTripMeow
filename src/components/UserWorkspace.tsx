@@ -184,9 +184,16 @@ export function UserWorkspace({
                               ? user.destinations.length > 0
                                 ? `全部 ${user.destinations.length} 站`
                                 : '暂无地点'
-                              : user.destinations.length > 0
-                                ? `${user.destinations.length} 站`
-                                : '空行程'}
+                              : [
+                                  user.destinations.length > 0
+                                    ? `${user.destinations.length} 站`
+                                    : '空行程',
+                                  (user.carryItems?.length ?? 0) > 0
+                                    ? `${user.carryItems!.length} 件物品`
+                                    : null,
+                                ]
+                                  .filter(Boolean)
+                                  .join(' · ') || '空行程'}
                           </span>
                         </span>
                         {selected && <span className="user-menu-check">当前</span>}
