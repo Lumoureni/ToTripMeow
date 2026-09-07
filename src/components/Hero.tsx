@@ -26,15 +26,17 @@ export function Hero({ onStartPlan, onLogin, loggedIn, username, displayName, is
               怎么用
             </a>
             {loggedIn ? (
-              <span className="landing-user-chip">已登录 · {label}</span>
+              <>
+                <span className="landing-user-chip">已登录 · {label}</span>
+                <button type="button" className="landing-btn solid" onClick={onStartPlan}>
+                  {isAdmin ? '管理后台' : '开始规划'}
+                </button>
+              </>
             ) : (
-              <button type="button" className="landing-btn ghost" onClick={onLogin}>
+              <button type="button" className="landing-btn solid" onClick={onLogin}>
                 登录
               </button>
             )}
-            <button type="button" className="landing-btn solid" onClick={onStartPlan}>
-              {loggedIn ? (isAdmin ? '管理后台' : '开始规划') : '开始规划'}
-            </button>
           </div>
         </div>
       </nav>
@@ -59,13 +61,15 @@ export function Hero({ onStartPlan, onLogin, loggedIn, username, displayName, is
               To Trip 是面向同行旅客的行程规划工具 —— 添加目的地、看见路线、记录携带物品，并可选择与同行共享。登录即可开始，数据同步到云端。
             </p>
             <div className="landing-ctas">
-              <button type="button" className="landing-btn solid lg" onClick={onStartPlan}>
-                {loggedIn ? (isAdmin ? '进入管理后台' : '打开我的行程') : '登录后开始规划'}
-                <span aria-hidden="true">→</span>
-              </button>
-              {!loggedIn && (
-                <button type="button" className="landing-btn outline lg" onClick={onLogin}>
-                  已有账号？登录
+              {loggedIn ? (
+                <button type="button" className="landing-btn solid lg" onClick={onStartPlan}>
+                  {isAdmin ? '进入管理后台' : '打开我的行程'}
+                  <span aria-hidden="true">→</span>
+                </button>
+              ) : (
+                <button type="button" className="landing-btn solid lg" onClick={onLogin}>
+                  登录
+                  <span aria-hidden="true">→</span>
                 </button>
               )}
               <a className="landing-btn text" href="#features">
@@ -281,12 +285,13 @@ export function Hero({ onStartPlan, onLogin, loggedIn, username, displayName, is
           </h2>
           <p>登录后即可添加目的地、规划驾车路线，并与同行同步行程与携带物品。</p>
           <div className="landing-ctas">
-            <button type="button" className="landing-btn light lg" onClick={onStartPlan}>
-              {loggedIn ? (isAdmin ? '进入管理后台' : '开始规划') : '登录后开始规划'}
-            </button>
-            {!loggedIn && (
-              <button type="button" className="landing-btn outline-light lg" onClick={onLogin}>
-                登录账号
+            {loggedIn ? (
+              <button type="button" className="landing-btn light lg" onClick={onStartPlan}>
+                {isAdmin ? '进入管理后台' : '开始规划'}
+              </button>
+            ) : (
+              <button type="button" className="landing-btn light lg" onClick={onLogin}>
+                登录
               </button>
             )}
           </div>
